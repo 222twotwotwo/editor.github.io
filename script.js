@@ -84,9 +84,22 @@ const sidebarRight = document.getElementById('sidebarRight');
 const toggleRightSidebarBtn = document.getElementById('toggleRightSidebarBtn');
 const toggleRightSidebar = document.getElementById('toggleRightSidebar');
 const fileList = document.getElementById('fileList');
-const newFileBtn = document.getElementById('newFileBtn');
+
 const saveFileBtn = document.getElementById('saveFileBtn');
+
 const deleteFileBtn = document.getElementById('deleteFileBtn');
+// 修复：删除当前文件按钮的事件绑定（显式传递当前文件参数，兜底校验）
+deleteFileBtn.addEventListener('click', () => {
+  // 兜底：若currentFile为空，提示用户
+  if (!fileSystem.currentFile) {
+    alert('暂无当前编辑的文件，无法删除！');
+    return;
+  }
+  // 显式调用删除当前文件
+  deleteFile(fileSystem.currentFile);
+});
+
+
 const fileNameInput = document.getElementById('fileNameInput');
 const importFileBtn = document.getElementById('importFileBtn');
 
@@ -205,31 +218,43 @@ function saveFile() {
 
 // 删除文件
 function deleteFile(filename) {
+  // 1. 补全参数：未传文件名则删除当前文件
   if (!filename) filename = fileSystem.currentFile;
-  if (!filename || !fileSystem.files[filename]) return;
   
+  // 2. 校验文件存在性：避免删除不存在的文件
+  if (!filename || !fileSystem.files[filename]) {
+    alert(`文件 "${filename || '未知'}.md" 不存在或已被删除`);
+    return;
+  }
+
+  // 3. 确认删除操作
   if (!confirm(`确定要删除 "${filename}.md" 吗？`)) {
     return;
   }
-  
-  // 删除文件
+
+  // 4. 标记是否为当前文件（核心：提前缓存状态）
+  const isDeleteCurrentFile = fileSystem.currentFile === filename;
+
+  // 5. 核心操作：删除文件（先删内存中的文件）
   delete fileSystem.files[filename];
+
+  // 6. 同步删除结果到本地存储（优先同步，避免后续操作覆盖）
   saveFilesToStorage();
-  
-  // 如果删除的是当前文件，切换到第一个文件或清空
-  const fileNames = Object.keys(fileSystem.files);
-  if (fileSystem.currentFile === filename) {
-    if (fileNames.length > 0) {
-      openFile(fileNames[0]);
-    } else {
-      fileSystem.currentFile = null;
-      editor.value = '';
-      fileNameInput.value = '';
-      renderPreview();
-    }
+
+  // 7. 处理当前文件删除后的逻辑（满足“编辑区清空”的核心需求）
+  if (isDeleteCurrentFile) {
+    // 无论是否有其他文件，都清空编辑区（你要的核心效果）
+    fileSystem.currentFile = null; // 重置当前文件状态，阻断回写
+    editor.value = '';            // 清空编辑器内容
+    fileNameInput.value = '';     // 清空文件名输入框
+    renderPreview();              // 刷新预览区（清空预览）
   }
-  
+
+  // 8. 刷新文件列表UI，确保删除后的列表同步
   renderFileList();
+
+  // 9. 友好反馈：告知删除成功
+  alert(`文件 "${filename}.md" 已成功删除`);
 }
 
 // 导入文件
@@ -279,7 +304,7 @@ function setRightSidebar(collapsed) {
 }
 
 // 右侧侧边栏事件监听
-newFileBtn.addEventListener('click', newFile);
+
 saveFileBtn.addEventListener('click', saveFile);
 deleteFileBtn.addEventListener('click', deleteFile);
 importFileBtn.addEventListener('click', importFile);
@@ -466,7 +491,169 @@ function updateStats() {
   }
 }
 
+/* ================= 代码高亮颜色自定义 ================= */
+
+// 定义可自定义的语法元素
+const syntaxElements = [
+  { id: 'keyword', name: '关键字' },
+  { id: 'variable', name: '变量名' },
+  { id: 'string', name: '字符串' },
+  { id: 'number', name: '数字' },
+  { id: 'comment', name: '注释' },
+  { id: 'function', name: '函数名' },
+  { id: 'class', name: '类名' },
+  { id: 'meta', name: '元数据' },
+  { id: 'built_in', name: '内置类型' },
+  { id: 'punctuation', name: '标点符号' },
+  { id: 'operator', name: '运算符' }
+];
+
+// 默认颜色配置
+const defaultColors = {
+  light: {
+    keyword: '#6ABFFA',
+    variable: '#C898FA',
+    string: '#F0A898',
+    number: '#88E888',
+    comment: '#78C878',
+    function: '#F8D878',
+    class: '#98D8F8',
+    meta: '#FF9878',
+    built_in: '#88C8F8',
+    punctuation: '#B8B8D8',
+    operator: '#D8D8F8'
+  },
+  dark: {
+    keyword: '#61AFEF',
+    variable: '#A7D8FF',
+    string: '#E59866',
+    number: '#98C379',
+    comment: '#72B865',
+    function: '#E5E58A',
+    class: '#56D9B9',
+    meta: '#FF9878',
+    built_in: '#88C8F8',
+    punctuation: '#B8B8D8',
+    operator: '#D8D8F8'
+  }
+};
+
+// 初始化颜色设置面板
+function initColorSettings() {
+  const colorSettings = document.getElementById('colorSettings');
+  const userColors = getUserColors();
+  
+  syntaxElements.forEach(element => {
+    const theme = document.documentElement.getAttribute('data-theme');
+    const defaultColor = defaultColors[theme][element.id];
+    const currentColor = userColors[theme][element.id] || defaultColor;
+    
+    const settingDiv = document.createElement('div');
+    settingDiv.className = 'color-setting';
+    settingDiv.innerHTML = `
+      <label for="${element.id}Color">${element.name}</label>
+      <div class="color-input-group">
+        <input type="color" id="${element.id}Color" value="${currentColor}">
+        <input type="text" id="${element.id}ColorHex" value="${currentColor}">
+      </div>
+    `;
+    
+    colorSettings.appendChild(settingDiv);
+    
+    // 绑定颜色选择事件
+    const colorInput = document.getElementById(`${element.id}Color`);
+    const hexInput = document.getElementById(`${element.id}ColorHex`);
+    
+    colorInput.addEventListener('input', () => {
+      hexInput.value = colorInput.value;
+      saveColorSetting(element.id, colorInput.value);
+      applyColorSettings();
+    });
+    
+    hexInput.addEventListener('input', () => {
+      if (/^#[0-9A-F]{6}$/i.test(hexInput.value)) {
+        colorInput.value = hexInput.value;
+        saveColorSetting(element.id, hexInput.value);
+        applyColorSettings();
+      }
+    });
+  });
+  
+  // 绑定重置按钮事件
+  document.getElementById('resetColorsBtn').addEventListener('click', () => {
+    if (confirm('确定要重置为默认颜色吗？')) {
+      localStorage.removeItem('customHighlightColors');
+      // 清空现有设置
+      document.getElementById('colorSettings').innerHTML = '';
+      initColorSettings();
+      applyColorSettings();
+    }
+  });
+  
+  // 主题切换时更新颜色设置
+  themeToggle.addEventListener('click', () => {
+    setTimeout(() => {
+      // 等待主题切换完成
+      document.getElementById('colorSettings').innerHTML = '';
+      initColorSettings();
+    }, 0);
+  });
+}
+
+// 获取用户颜色设置
+function getUserColors() {
+  const saved = localStorage.getItem('customHighlightColors');
+  return saved ? JSON.parse(saved) : { light: {}, dark: {} };
+}
+
+// 保存颜色设置
+function saveColorSetting(elementId, color) {
+  const theme = document.documentElement.getAttribute('data-theme');
+  const userColors = getUserColors();
+  
+  if (!userColors[theme]) {
+    userColors[theme] = {};
+  }
+  
+  userColors[theme][elementId] = color;
+  localStorage.setItem('customHighlightColors', JSON.stringify(userColors));
+}
+
+// 应用颜色设置
+function applyColorSettings() {
+  const userColors = getUserColors();
+  const theme = document.documentElement.getAttribute('data-theme');
+  
+  // 移除已存在的自定义样式
+  const existingStyle = document.getElementById('customHighlightStyles');
+  if (existingStyle) {
+    existingStyle.remove();
+  }
+  
+  // 创建新的样式元素
+  const style = document.createElement('style');
+  style.id = 'customHighlightStyles';
+  
+  let css = '';
+  syntaxElements.forEach(element => {
+    const color = userColors[theme][element.id] || defaultColors[theme][element.id];
+    css += `[data-theme="${theme}"] .hljs-${element.id} { color: ${color} !important; }\n`;
+  });
+  
+  style.textContent = css;
+  document.head.appendChild(style);
+  
+  // 重新渲染预览以应用新样式
+  renderPreview();
+}
+
 /* 初始化 */
-updateStats();
-renderPreview();
-initFileSystem();
+function init() {
+  updateStats();
+  renderPreview();
+  initFileSystem();
+  initColorSettings(); // 添加颜色设置初始化
+  applyColorSettings(); // 应用颜色设置
+}
+
+init();
