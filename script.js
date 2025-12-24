@@ -1,415 +1,659 @@
-:root {
-  --bg: #f7f7f7;
-  --panel: #ffffff;
-  --border: #ddd;
-  --text: #222;
-  /* 新增半透明变量 */
-  --panel-opacity: 0.85;
-  --topbar-opacity: 0.9;
+/* ================= Markdown + 高亮 ================= */
+
+const md = window.markdownit({
+  html: true,
+  linkify: true,
+  typographer: true,
+  highlight: (str, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang }).value}</code></pre>`;
+    }
+    return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
+  }
+});
+
+const editor = document.getElementById('editor');
+const preview = document.getElementById('preview');
+
+function renderPreview() {
+  preview.innerHTML = md.render(editor.value);
+}
+editor.addEventListener('input', () => {
+  renderPreview();
+  playEditSound();
+});
+
+/* ================= 深色模式 ================= */
+
+const themeToggle = document.getElementById('themeToggle');
+const hljsLight = document.getElementById('hljs-light');
+const hljsDark = document.getElementById('hljs-dark');
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+
+  const dark = theme === 'dark';
+  hljsLight.disabled = dark;
+  hljsDark.disabled = !dark;
+  themeToggle.textContent = dark ? '☀️' : '🌙';
 }
 
-[data-theme="dark"] {
-  --bg: #1e1e1e;
-  --panel: #2a2a2a;
-  --border: #444;
-  --text: #eee;
-  /* 深色模式保持一致的透明度 */
-  --panel-opacity: 0.85;
-  --topbar-opacity: 0.9;
+setTheme(localStorage.getItem('theme') || 'light');
+
+themeToggle.onclick = () => {
+  setTheme(
+    document.documentElement.getAttribute('data-theme') === 'dark'
+      ? 'light' : 'dark'
+  );
+};
+
+/* ================= 左侧侧边栏控制 ================= */
+
+const sidebar = document.getElementById('sidebar');
+const toggleSidebar = document.getElementById('toggleSidebar');
+
+function setSidebar(collapsed) {
+  sidebar.classList.toggle('collapsed', collapsed);
+  localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
 }
 
-body {
-  margin: 0;
-  font-family: system-ui, -apple-system;
-  background: var(--bg);
-  color: var(--text);
-  /* 全局壁纸设置 */
-  background-image: url('audio/wallpaper.png');
-  background-size: cover; /* 覆盖整个界面 */
-  background-repeat: no-repeat; /* 不重复 */
-  background-position: center center; /* 居中 */
-  background-attachment: fixed; /* 固定背景不滚动 */
+const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+// 默认折叠左侧侧边栏
+if (savedSidebarState === null) {
+  setSidebar(true);
+} else {
+  setSidebar(savedSidebarState === '1');
 }
 
-/* 顶部栏 - 半透明 */
-.topbar {
-  height: 52px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, var(--topbar-opacity));
-  border-bottom: 1px solid var(--border);
-  /* 深色模式适配 */
-  backdrop-filter: blur(8px); /* 毛玻璃效果增强观感 */
+toggleSidebar.onclick = () => {
+  setSidebar(!sidebar.classList.contains('collapsed'));
+};
+
+/* ================= 右侧侧边栏及文件管理 ================= */
+
+// 文件系统状态
+const fileSystem = {
+  files: {},           // 存储所有文件内容 { filename: content }
+  currentFile: null,   // 当前激活的文件名
+  FILE_STORAGE_KEY: 'markdownStudioFiles' // localStorage存储键名
+};
+
+// DOM元素
+const sidebarRight = document.getElementById('sidebarRight');
+const toggleRightSidebarBtn = document.getElementById('toggleRightSidebarBtn');
+const toggleRightSidebar = document.getElementById('toggleRightSidebar');
+const fileList = document.getElementById('fileList');
+
+const saveFileBtn = document.getElementById('saveFileBtn');
+
+const deleteFileBtn = document.getElementById('deleteFileBtn');
+// 修复：删除当前文件按钮的事件绑定（显式传递当前文件参数，兜底校验）
+deleteFileBtn.addEventListener('click', () => {
+  // 兜底：若currentFile为空，提示用户
+  if (!fileSystem.currentFile) {
+    alert('暂无当前编辑的文件，无法删除！');
+    return;
+  }
+  // 显式调用删除当前文件
+  deleteFile(fileSystem.currentFile);
+});
+
+
+const fileNameInput = document.getElementById('fileNameInput');
+const importFileBtn = document.getElementById('importFileBtn');
+
+// 初始化文件系统
+function initFileSystem() {
+  const savedFiles = localStorage.getItem(fileSystem.FILE_STORAGE_KEY);
+  if (savedFiles) {
+    fileSystem.files = JSON.parse(savedFiles);
+    // 加载第一个文件
+    const fileNames = Object.keys(fileSystem.files);
+    if (fileNames.length > 0) {
+      openFile(fileNames[0]);
+    }
+  }
+  renderFileList();
 }
 
-/* 深色模式顶部栏背景修正 */
-[data-theme="dark"] .topbar {
-  background: rgba(42, 42, 42, var(--topbar-opacity));
+// 渲染文件列表
+function renderFileList() {
+  fileList.innerHTML = '';
+  const fileNames = Object.keys(fileSystem.files);
+  
+  if (fileNames.length === 0) {
+    fileList.innerHTML = '<div style="padding: 12px; text-align: center; color: #888;">无文件</div>';
+    return;
+  }
+  
+  fileNames.forEach(filename => {
+    const fileItem = document.createElement('div');
+    fileItem.className = `file-item ${fileSystem.currentFile === filename ? 'active' : ''}`;
+    fileItem.innerHTML = `
+      <span>${filename}.md</span>
+      <span class="delete-icon" data-file="${filename}">×</span>
+    `;
+    
+    // 点击文件切换
+    fileItem.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('delete-icon')) {
+        openFile(filename);
+      }
+    });
+    
+    fileList.appendChild(fileItem);
+  });
+  
+  // 添加删除文件事件监听
+  document.querySelectorAll('.delete-icon').forEach(icon => {
+    icon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const filename = e.target.getAttribute('data-file');
+      deleteFile(filename);
+    });
+  });
 }
 
-.topbar .title {
-  margin-left: 10px;
-  font-weight: bold;
+// 打开文件
+function openFile(filename) {
+  if (!fileSystem.files[filename]) return;
+  
+  // 保存当前文件内容
+  if (fileSystem.currentFile) {
+    fileSystem.files[fileSystem.currentFile] = editor.value;
+    saveFilesToStorage();
+  }
+  
+  // 加载新文件内容
+  fileSystem.currentFile = filename;
+  editor.value = fileSystem.files[filename];
+  fileNameInput.value = filename;
+  renderPreview();
+  renderFileList();
 }
 
-.topbar .actions {
-  margin-left: auto;
+// 新建文件
+function newFile() {
+  let defaultName = '新文件';
+  let count = 1;
+  
+  // 确保文件名唯一
+  while (fileSystem.files[defaultName]) {
+    defaultName = `新文件${count}`;
+    count++;
+  }
+  
+  // 创建新文件
+  fileSystem.files[defaultName] = '';
+  saveFilesToStorage();
+  openFile(defaultName);
 }
 
-.topbar button {
-  margin-left: 6px;
+// 保存文件
+function saveFile() {
+  const newFilename = fileNameInput.value.trim();
+  if (!newFilename) {
+    alert('请输入文件名');
+    return;
+  }
+  
+  // 如果文件名已更改且存在
+  if (newFilename !== fileSystem.currentFile && fileSystem.files[newFilename]) {
+    if (!confirm(`文件 "${newFilename}" 已存在，是否覆盖？`)) {
+      return;
+    }
+  }
+  
+  // 如果是重命名
+  if (fileSystem.currentFile && newFilename !== fileSystem.currentFile) {
+    delete fileSystem.files[fileSystem.currentFile];
+  }
+  
+  // 保存文件内容
+  fileSystem.files[newFilename] = editor.value;
+  saveFilesToStorage();
+  openFile(newFilename);
 }
 
-/* 布局 */
-.container {
-  display: flex;
-  height: calc(100vh - 52px);
+// 删除文件
+function deleteFile(filename) {
+  // 1. 补全参数：未传文件名则删除当前文件
+  if (!filename) filename = fileSystem.currentFile;
+  
+  // 2. 校验文件存在性：避免删除不存在的文件
+  if (!filename || !fileSystem.files[filename]) {
+    alert(`文件 "${filename || '未知'}.md" 不存在或已被删除`);
+    return;
+  }
+
+  // 3. 确认删除操作
+  if (!confirm(`确定要删除 "${filename}.md" 吗？`)) {
+    return;
+  }
+
+  // 4. 标记是否为当前文件（核心：提前缓存状态）
+  const isDeleteCurrentFile = fileSystem.currentFile === filename;
+
+  // 5. 核心操作：删除文件（先删内存中的文件）
+  delete fileSystem.files[filename];
+
+  // 6. 同步删除结果到本地存储（优先同步，避免后续操作覆盖）
+  saveFilesToStorage();
+
+  // 7. 处理当前文件删除后的逻辑（满足“编辑区清空”的核心需求）
+  if (isDeleteCurrentFile) {
+    // 无论是否有其他文件，都清空编辑区（你要的核心效果）
+    fileSystem.currentFile = null; // 重置当前文件状态，阻断回写
+    editor.value = '';            // 清空编辑器内容
+    fileNameInput.value = '';     // 清空文件名输入框
+    renderPreview();              // 刷新预览区（清空预览）
+  }
+
+  // 8. 刷新文件列表UI，确保删除后的列表同步
+  renderFileList();
+
+  // 9. 友好反馈：告知删除成功
+  alert(`文件 "${filename}.md" 已成功删除`);
 }
 
-/* 左侧侧边栏 - 半透明 */
-.sidebar {
-  width: 280px;
-  background: rgba(255, 255, 255, var(--panel-opacity));
-  border-right: 1px solid var(--border);
-  padding: 12px;
-  transition: width .25s ease, padding .25s ease;
-  overflow-y: auto;
-  backdrop-filter: blur(8px);
+// 导入文件
+function importFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.md';
+  
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      // 获取不带扩展名的文件名
+      const filename = file.name.replace(/\.md$/i, '');
+      let finalName = filename;
+      let count = 1;
+      
+      // 确保文件名唯一
+      while (fileSystem.files[finalName]) {
+        finalName = `${filename}${count}`;
+        count++;
+      }
+      
+      // 保存导入的文件
+      fileSystem.files[finalName] = event.target.result;
+      saveFilesToStorage();
+      openFile(finalName);
+      alert(`已导入文件: ${finalName}.md`);
+    };
+    reader.readAsText(file);
+  };
+  
+  input.click();
 }
 
-/* 深色模式左侧侧边栏 */
-[data-theme="dark"] .sidebar {
-  background: rgba(42, 42, 42, var(--panel-opacity));
+// 保存文件到localStorage
+function saveFilesToStorage() {
+  localStorage.setItem(fileSystem.FILE_STORAGE_KEY, JSON.stringify(fileSystem.files));
 }
 
-.sidebar.collapsed {
-  width: 0;
-  padding: 0;
-  border-right: none;
-  overflow: hidden;
+// 右侧侧边栏控制
+function setRightSidebar(collapsed) {
+  sidebarRight.classList.toggle('collapsed', collapsed);
+  localStorage.setItem('rightSidebarCollapsed', collapsed ? '1' : '0');
 }
 
-/* 右侧侧边栏 - 半透明 */
-.sidebar-right {
-  width: 280px;
-  background: rgba(255, 255, 255, var(--panel-opacity));
-  border-left: 1px solid var(--border);
-  padding: 12px;
-  transition: width .25s ease, padding .25s ease;
-  overflow-y: auto;
-  backdrop-filter: blur(8px);
+// 右侧侧边栏事件监听
+
+saveFileBtn.addEventListener('click', saveFile);
+deleteFileBtn.addEventListener('click', deleteFile);
+importFileBtn.addEventListener('click', importFile);
+
+toggleRightSidebarBtn.addEventListener('click', () => {
+  setRightSidebar(!sidebarRight.classList.contains('collapsed'));
+});
+
+toggleRightSidebar.addEventListener('click', () => {
+  setRightSidebar(true);
+});
+
+// 初始化右侧侧边栏状态（默认折叠）
+const rightSidebarSaved = localStorage.getItem('rightSidebarCollapsed');
+if (rightSidebarSaved === null) {
+  setRightSidebar(true); // 首次加载默认折叠
+} else {
+  setRightSidebar(rightSidebarSaved === '1');
 }
 
-/* 深色模式右侧侧边栏 */
-[data-theme="dark"] .sidebar-right {
-  background: rgba(42, 42, 42, var(--panel-opacity));
+/* ================= 音效系统 ================= */
+
+const editAudio = new Audio('audio/edit.mp3');
+const exportAudio = new Audio('audio/export.mp3');
+
+editAudio.volume = 0.4;
+exportAudio.volume = 0.6;
+
+let audioUnlocked = false;
+let soundEnabled = localStorage.getItem('soundEnabled') !== '0';
+let editPlaying = false;
+
+document.addEventListener('click', () => {
+  if (!audioUnlocked) {
+    editAudio.play().then(() => {
+      editAudio.pause();
+      editAudio.currentTime = 0;
+      audioUnlocked = true;
+    }).catch(() => {});
+  }
+}, { once: true });
+
+function playEditSound() {
+  if (!audioUnlocked || !soundEnabled || editPlaying) return;
+  editPlaying = true;
+  editAudio.currentTime = 0;
+  editAudio.play().finally(() => {
+    editAudio.onended = () => editPlaying = false;
+  });
 }
 
-.sidebar-right.collapsed {
-  width: 0;
-  padding: 0;
-  border-left: none;
-  overflow: hidden;
+function playExportSound() {
+  if (!audioUnlocked || !soundEnabled) return;
+  exportAudio.currentTime = 0;
+  exportAudio.play().catch(() => {});
 }
 
-/* 面板 - 半透明（增强层级） */
-.panel {
-  margin-bottom: 18px;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 8px;
-  border-radius: 4px;
-  backdrop-filter: blur(4px);
+/* 音效开关 */
+const soundToggle = document.getElementById('soundToggle');
+function updateSoundBtn() {
+  soundToggle.textContent = soundEnabled ? '🔊' : '🔇';
+}
+updateSoundBtn();
+
+soundToggle.onclick = () => {
+  soundEnabled = !soundEnabled;
+  localStorage.setItem('soundEnabled', soundEnabled ? '1' : '0');
+  updateSoundBtn();
+};
+
+/* ================= 导出功能 ================= */
+
+const exportBtn = document.getElementById('exportBtn');
+const exportMdBtn = document.getElementById('exportMdBtn'); // 导出MD按钮
+const exportPdfBtn = document.getElementById('exportPdfBtn');
+
+// 导出HTML
+exportBtn.onclick = () => {
+  playExportSound();
+  const blob = new Blob([preview.innerHTML], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'export.html';
+  a.click();
+};
+
+// 新增：导出MD文件
+exportMdBtn.onclick = () => {
+  playExportSound();
+  // 使用当前文件名（如果有），否则用默认名
+  const fileName = fileSystem.currentFile ? `${fileSystem.currentFile}.md` : 'export.md';
+  const blob = new Blob([editor.value], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  a.click();
+  // 释放URL对象
+  URL.revokeObjectURL(a.href);
+};
+
+// 导出PDF
+exportPdfBtn.onclick = () => {
+  playExportSound();
+  html2pdf().from(preview).save();
+};
+
+/* ================= GitHub 上传 + 指标 ================= */
+
+const KEY = 'uploadStats';
+const uploadGithubBtn = document.getElementById('uploadGithubBtn');
+const repoOwner = document.getElementById('repoOwner');
+const repoName = document.getElementById('repoName');
+const filePath = document.getElementById('filePath');
+const tokenInput = document.getElementById('tokenInput');
+const todayCount = document.getElementById('todayCount');
+const uploadChart = document.getElementById('uploadChart');
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-[data-theme="dark"] .panel {
-  background: rgba(42, 42, 42, 0.9);
+function recordUploadSuccess() {
+  const s = JSON.parse(localStorage.getItem(KEY) || '{}');
+  const t = today();
+  s[t] = (s[t] || 0) + 1;
+  localStorage.setItem(KEY, JSON.stringify(s));
+  updateStats();
 }
 
-.panel h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
+uploadGithubBtn.onclick = async () => {
+  const owner = repoOwner.value.trim();
+  const repo = repoName.value.trim();
+  const path = filePath.value.trim();
+  const token = tokenInput.value.trim();
+  if (!owner || !repo || !path || !token) return alert('信息不完整');
+
+  const content = btoa(unescape(encodeURIComponent(editor.value)));
+  const api = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+  let sha = null;
+  const r = await fetch(api, { headers: { Authorization: `token ${token}` } });
+  if (r.ok) sha = (await r.json()).sha;
+
+  const res = await fetch(api, {
+    method: 'PUT',
+    headers: {
+      Authorization: `token ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ message: 'Update Markdown', content, sha })
+  });
+
+  if (!res.ok) return alert('上传失败');
+  recordUploadSuccess();
+  alert('✅ 已上传到 GitHub');
+};
+
+/* ================= 上传统计 ================= */
+
+let chart;
+
+function updateStats() {
+  const s = JSON.parse(localStorage.getItem(KEY) || '{}');
+  todayCount.textContent = `今日上传：${s[today()] || 0} 次`;
+
+  const labels = [];
+  const data = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const k = d.toISOString().slice(0, 10);
+    labels.push(k.slice(5));
+    data.push(s[k] || 0);
+  }
+
+  if (!chart) {
+    chart = new Chart(uploadChart, {
+      type: 'bar',
+      data: { labels, datasets: [{ data }] }
+    });
+  } else {
+    chart.data.datasets[0].data = data;
+    chart.update();
+  }
 }
 
-.panel input,
-.panel button {
-  width: 100%;
-  margin-bottom: 6px;
+/* ================= 代码高亮颜色自定义 ================= */
+
+// 定义可自定义的语法元素
+const syntaxElements = [
+  { id: 'keyword', name: '关键字' },
+  { id: 'variable', name: '变量名' },
+  { id: 'string', name: '字符串' },
+  { id: 'number', name: '数字' },
+  { id: 'comment', name: '注释' },
+  { id: 'function', name: '函数名' },
+  { id: 'class', name: '类名' },
+  { id: 'meta', name: '元数据' },
+  { id: 'built_in', name: '内置类型' },
+  { id: 'punctuation', name: '标点符号' },
+  { id: 'operator', name: '运算符' }
+];
+
+// 默认颜色配置
+const defaultColors = {
+  light: {
+    keyword: '#6ABFFA',
+    variable: '#C898FA',
+    string: '#F0A898',
+    number: '#88E888',
+    comment: '#78C878',
+    function: '#F8D878',
+    class: '#98D8F8',
+    meta: '#FF9878',
+    built_in: '#88C8F8',
+    punctuation: '#B8B8D8',
+    operator: '#D8D8F8'
+  },
+  dark: {
+    keyword: '#61AFEF',
+    variable: '#A7D8FF',
+    string: '#E59866',
+    number: '#98C379',
+    comment: '#72B865',
+    function: '#E5E58A',
+    class: '#56D9B9',
+    meta: '#FF9878',
+    built_in: '#88C8F8',
+    punctuation: '#B8B8D8',
+    operator: '#D8D8F8'
+  }
+};
+
+// 初始化颜色设置面板
+function initColorSettings() {
+  const colorSettings = document.getElementById('colorSettings');
+  const userColors = getUserColors();
+  
+  syntaxElements.forEach(element => {
+    const theme = document.documentElement.getAttribute('data-theme');
+    const defaultColor = defaultColors[theme][element.id];
+    const currentColor = userColors[theme][element.id] || defaultColor;
+    
+    const settingDiv = document.createElement('div');
+    settingDiv.className = 'color-setting';
+    settingDiv.innerHTML = `
+      <label for="${element.id}Color">${element.name}</label>
+      <div class="color-input-group">
+        <input type="color" id="${element.id}Color" value="${currentColor}">
+        <input type="text" id="${element.id}ColorHex" value="${currentColor}">
+      </div>
+    `;
+    
+    colorSettings.appendChild(settingDiv);
+    
+    // 绑定颜色选择事件
+    const colorInput = document.getElementById(`${element.id}Color`);
+    const hexInput = document.getElementById(`${element.id}ColorHex`);
+    
+    colorInput.addEventListener('input', () => {
+      hexInput.value = colorInput.value;
+      saveColorSetting(element.id, colorInput.value);
+      applyColorSettings();
+    });
+    
+    hexInput.addEventListener('input', () => {
+      if (/^#[0-9A-F]{6}$/i.test(hexInput.value)) {
+        colorInput.value = hexInput.value;
+        saveColorSetting(element.id, hexInput.value);
+        applyColorSettings();
+      }
+    });
+  });
+  
+  // 绑定重置按钮事件
+  document.getElementById('resetColorsBtn').addEventListener('click', () => {
+    if (confirm('确定要重置为默认颜色吗？')) {
+      localStorage.removeItem('customHighlightColors');
+      // 清空现有设置
+      document.getElementById('colorSettings').innerHTML = '';
+      initColorSettings();
+      applyColorSettings();
+    }
+  });
+  
+  // 主题切换时更新颜色设置
+  themeToggle.addEventListener('click', () => {
+    setTimeout(() => {
+      // 等待主题切换完成
+      document.getElementById('colorSettings').innerHTML = '';
+      initColorSettings();
+    }, 0);
+  });
 }
 
-/* 文件列表样式 */
-.file-list {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  max-height: 300px;
-  overflow-y: auto;
-  margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.8);
+// 获取用户颜色设置
+function getUserColors() {
+  const saved = localStorage.getItem('customHighlightColors');
+  return saved ? JSON.parse(saved) : { light: {}, dark: {} };
 }
 
-[data-theme="dark"] .file-list {
-  background: rgba(30, 30, 30, 0.8);
+// 保存颜色设置
+function saveColorSetting(elementId, color) {
+  const theme = document.documentElement.getAttribute('data-theme');
+  const userColors = getUserColors();
+  
+  if (!userColors[theme]) {
+    userColors[theme] = {};
+  }
+  
+  userColors[theme][elementId] = color;
+  localStorage.setItem('customHighlightColors', JSON.stringify(userColors));
 }
 
-.file-item {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+// 应用颜色设置
+function applyColorSettings() {
+  const userColors = getUserColors();
+  const theme = document.documentElement.getAttribute('data-theme');
+  
+  // 移除已存在的自定义样式
+  const existingStyle = document.getElementById('customHighlightStyles');
+  if (existingStyle) {
+    existingStyle.remove();
+  }
+  
+  // 创建新的样式元素
+  const style = document.createElement('style');
+  style.id = 'customHighlightStyles';
+  
+  let css = '';
+  syntaxElements.forEach(element => {
+    const color = userColors[theme][element.id] || defaultColors[theme][element.id];
+    css += `[data-theme="${theme}"] .hljs-${element.id} { color: ${color} !important; }\n`;
+  });
+  
+  style.textContent = css;
+  document.head.appendChild(style);
+  
+  // 重新渲染预览以应用新样式
+  renderPreview();
 }
 
-.file-item:last-child {
-  border-bottom: none;
+/* 初始化 */
+function init() {
+  updateStats();
+  renderPreview();
+  initFileSystem();
+  initColorSettings(); // 添加颜色设置初始化
+  applyColorSettings(); // 应用颜色设置
 }
 
-.file-item:hover {
-  background-color: rgba(0,0,0,0.05);
-}
-
-.file-item.active {
-  background-color: rgba(59, 130, 246, 0.1);
-  font-weight: bold;
-}
-
-.file-item .delete-icon {
-  opacity: 0.5;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.file-item .delete-icon:hover {
-  opacity: 1;
-}
-
-/* 主区 */
-.main {
-  flex: 1;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-}
-
-.editor-container {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-/* 编辑器 - 半透明 */
-#editor {
-  padding: 12px;
-  font-family: monospace;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, var(--panel-opacity));
-  color: var(--text);
-  backdrop-filter: blur(8px);
-}
-
-[data-theme="dark"] #editor {
-  background: rgba(42, 42, 42, var(--panel-opacity));
-}
-
-/* 预览区 - 半透明 */
-#preview {
-  padding: 12px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, var(--panel-opacity));
-  overflow-y: auto;
-  backdrop-filter: blur(8px);
-}
-
-[data-theme="dark"] #preview {
-  background: rgba(42, 42, 42, var(--panel-opacity));
-}
-
-/* 预览区代码块样式优化 */
-#preview pre.hljs {
-  margin: 12px 0; /* 上下外边距 */
-  padding: 16px; /* 内边距增大 */
-  border-radius: 4px; /* 轻微圆角 */
-  background: rgba(0, 0, 0, 0.8) !important; /* 代码块加深保证可读性 */
-}
-
-#preview pre.hljs code {
-  line-height: 1.5; /* 优化行高 */
-}
-
-/* 两侧边栏都打开时的布局调整 */
-.container:has(.sidebar:not(.collapsed)):has(.sidebar-right:not(.collapsed)) .main {
-  flex: 1;
-  min-width: 400px;
-}
-
-/* 按钮样式增强（保证半透明背景下的可读性） */
-button {
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 10px;
-  cursor: pointer;
-  color: var(--text);
-  transition: background 0.2s;
-}
-
-[data-theme="dark"] button {
-  background: rgba(42, 42, 42, 0.9);
-}
-
-button:hover {
-  background: rgba(240, 240, 240, 0.95);
-}
-
-[data-theme="dark"] button:hover {
-  background: rgba(50, 50, 50, 0.95);
-}
-
-/* 输入框半透明 */
-input {
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 8px;
-  color: var(--text);
-}
-
-[data-theme="dark"] input {
-  background: rgba(42, 42, 42, 0.9);
-}
-
-[data-theme="light"] .hljs {
-  background-color: #ffffff;
-  padding: 12px;
-  border-radius: 4px;
-  color: #ffffff; /* Light+ 基础文字色（纯黑，高对比） */
-}
-
-[data-theme="light"] .hljs-meta {
-  color: #FF9878; /* 亮珊瑚橙，黑底高对比，预处理指令醒目 */
-  font-weight: 500;
-}
-/* 关键字（int/if/else/for 等） */
-[data-theme="light"] .hljs-keyword {
-  color: #6ABFFA; /* 亮青蓝，核心语法关键字 */
-  font-weight: 500;
-}
-/* 内置类型（int/char/float 等） */
-[data-theme="light"] .hljs-built_in {
-  color: #88C8F8; /* 浅青蓝，与普通关键字区分，仍属语法层 */
-}
-/* 函数名（main/自定义函数等） */
-[data-theme="light"] .hljs-title.function_ {
-  color: #F8D878; /* 亮浅金黄，函数名核心层级 */
-}
-/* 变量名 */
-[data-theme="light"] .hljs-variable {
-  color: #C898FA; /* 亮浅紫，数据层 */
-}
-/* 字符串 */
-[data-theme="light"] .hljs-string {
-  color: #F0A898; /* 亮三文鱼橙，文本层 */
-}
-/* 数字 */
-[data-theme="light"] .hljs-number {
-  color: #88E888; /* 亮薄荷绿，数值层 */
-}
-/* 注释 */
-[data-theme="light"] .hljs-comment {
-  color: #78C878; /* 亮橄榄绿，弱化但清晰 */
-  font-style: italic;
-  opacity: 0.9;
-}
-/* 类名 */
-[data-theme="light"] .hljs-class {
-  color: #98D8F8; /* 亮浅青，类型层 */
-}
-/* 标点符号（括号/分号/大括号等） */
-[data-theme="light"] .hljs-punctuation {
-  color: #B8B8D8; /* 浅紫灰，标点层，黑底不融且不抢戏 */
-}
-/* 运算符（=/+/*/等） */
-[data-theme="light"] .hljs-operator {
-  color: #D8D8F8; /* 亮紫灰，运算符层，略亮于标点 */
-}
-
-/* 针对 dark mode 的调整（与浅色系同风格的柔雾深色主题，视觉统一） */
-[data-theme="dark"] .hljs {
-  background-color: #f1e9e9; /* 深灰紫底（与浅色系同色系，协调统一） */
-  padding: 12px;
-  border-radius: 6px;
-  color: #e0e0f0; /* 浅灰紫基础文字色（高对比度+柔和感） */
-  line-height: 1.6;
-}
-
-/* VSCode Dark+ 优化配色（核心：高对比度、高鲜艳度，无灰暗色） */
-[data-theme="dark"] .hljs-keyword {
-  color: #61AFEF; /* 亮蓝色（鲜艳不刺眼，替代原灰暗的 #569CD6） */
-}
-
-[data-theme="dark"] .hljs-variable {
-  color: #A7D8FF; /* 浅青蓝（更亮更通透，替代原偏灰的 #9CDCFE） */
-}
-
-[data-theme="dark"] .hljs-string {
-  color: #E59866; /* 三文鱼橙（更鲜艳，替代原偏暗的 #CE9178） */
-}
-
-[data-theme="dark"] .hljs-number {
-  color: #98C379; /* 薄荷绿（更亮更清新，替代原偏灰的 #B5CEA8） */
-}
-
-[data-theme="dark"] .hljs-comment {
-  color: #72B865; /* 橄榄绿（更亮更通透，替代原偏暗的 #6A9955） */
-}
-
-[data-theme="dark"] .hljs-function {
-  color: #E5E58A; /* 浅金黄（更亮更醒目，替代原偏灰的 #DCDCAA） */
-}
-
-[data-theme="dark"] .hljs-class {
-  color: #56D9B9; /* 青柠绿（更鲜艳，替代原偏暗的 #4EC9B0） */
-}
-
-/* 颜色设置面板样式 */
-.color-setting {
-  margin-bottom: 10px;
-}
-
-.color-setting label {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-}
-
-.color-input-group {
-  display: flex;
-  gap: 8px;
-}
-
-.color-input-group input[type="color"] {
-  width: 40px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--border);
-  cursor: pointer;
-}
-
-.color-input-group input[type="text"] {
-  flex: 1;
-}
-
-#resetColorsBtn {
-  margin-top: 10px;
-  background: rgba(230, 74, 74, 0.9);
-  color: white;
-}
-
-[data-theme="dark"] #resetColorsBtn {
-  background: rgba(230, 74, 74, 0.7);
-}
-
-#resetColorsBtn:hover {
-  background: rgba(230, 74, 74, 1);
-}
+init();
