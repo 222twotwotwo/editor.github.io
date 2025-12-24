@@ -1,6 +1,6 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
 <html data-theme="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <title>Markdown Studio</title>
@@ -17,7 +17,8 @@
 
   <link rel="stylesheet" href="style.css" />
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  <!-- 引入 highlight.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
 
 </head>
 
@@ -56,6 +57,15 @@
       <canvas id="uploadChart" height="140"></canvas>
     </section>
 
+    <!-- 新增颜色设置面板 -->
+    <section class="panel">
+      <h3>🎨 代码高亮颜色</h3>
+      <div id="colorSettings">
+        <!-- 颜色设置项将通过JS动态生成 -->
+      </div>
+      <button id="resetColorsBtn">重置默认颜色</button>
+    </section>
+
   </aside>
 
   <!-- 主内容区 -->
@@ -73,7 +83,6 @@
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <h3>📂 文件管理</h3>
         <div>
-          <button id="newFileBtn" title="新建文件">+</button>
           <button id="toggleRightSidebar" title="隐藏侧边栏">⊗</button>
         </div>
       </div>
@@ -100,5 +109,3 @@
 <script src="script.js"></script>
 </body>
 </html>
-
-
