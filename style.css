@@ -279,14 +279,6 @@ input {
   background: rgba(42, 42, 42, 0.9);
 }
 
-
-
-
-
-
-
-
-
 [data-theme="light"] .hljs {
   background-color: #ffffff;
   padding: 12px;
@@ -342,9 +334,6 @@ input {
   color: #D8D8F8; /* 亮紫灰，运算符层，略亮于标点 */
 }
 
-
-
-
 /* 针对 dark mode 的调整（与浅色系同风格的柔雾深色主题，视觉统一） */
 [data-theme="dark"] .hljs {
   background-color: #f1e9e9; /* 深灰紫底（与浅色系同色系，协调统一） */
@@ -353,7 +342,6 @@ input {
   color: #e0e0f0; /* 浅灰紫基础文字色（高对比度+柔和感） */
   line-height: 1.6;
 }
-
 
 /* VSCode Dark+ 优化配色（核心：高对比度、高鲜艳度，无灰暗色） */
 [data-theme="dark"] .hljs-keyword {
@@ -382,4 +370,46 @@ input {
 
 [data-theme="dark"] .hljs-class {
   color: #56D9B9; /* 青柠绿（更鲜艳，替代原偏暗的 #4EC9B0） */
+}
+
+/* 颜色设置面板样式 */
+.color-setting {
+  margin-bottom: 10px;
+}
+
+.color-setting label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.color-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.color-input-group input[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.color-input-group input[type="text"] {
+  flex: 1;
+}
+
+#resetColorsBtn {
+  margin-top: 10px;
+  background: rgba(230, 74, 74, 0.9);
+  color: white;
+}
+
+[data-theme="dark"] #resetColorsBtn {
+  background: rgba(230, 74, 74, 0.7);
+}
+
+#resetColorsBtn:hover {
+  background: rgba(230, 74, 74, 1);
 }
