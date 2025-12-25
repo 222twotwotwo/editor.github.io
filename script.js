@@ -647,11 +647,31 @@ function applyColorSettings() {
       css += `[data-theme="${theme}"] .hljs-title { color: ${color} !important; }\n`;
       css += `[data-theme="${theme}"] .hljs-name { color: ${color} !important; }\n`;
     }
-    // 为标点符号生成CSS选择器
+    // 为标点符号生成多个可能的CSS选择器
     else if (element.id === 'punctuation') {
+      // 同时覆盖多种可能的标点符号类名
       css += `[data-theme="${theme}"] .hljs-punctuation { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-operator { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-symbol { color: ${color} !important; }\n`;
     }
-    // 其他元素
+    // 为变量名生成多个可能的CSS选择器
+    else if (element.id === 'variable') {
+      // 同时覆盖多种可能的变量名类名
+      css += `[data-theme="${theme}"] .hljs-variable { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-variable.language_ { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-params { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-attr { color: ${color} !important; }\n`;
+    }
+    // 为类名生成多个可能的CSS选择器
+    else if (element.id === 'class') {
+      // 同时覆盖多种可能的类名类名
+      css += `[data-theme="${theme}"] .hljs-class { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-title.class_ { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-type { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-built_in { color: ${color} !important; }\n`;
+      css += `[data-theme="${theme}"] .hljs-selector-class { color: ${color} !important; }\n`;
+    }
+    // 为其他元素生成CSS选择器
     else {
       css += `[data-theme="${theme}"] .hljs-${element.id} { color: ${color} !important; }\n`;
     }
