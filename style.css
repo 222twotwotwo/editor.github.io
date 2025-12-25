@@ -338,9 +338,8 @@ input {
 [data-theme="dark"] .hljs {
   background-color: #f1e9e9; /* 深灰紫底（与浅色系同色系，协调统一） */
   padding: 12px;
-  border-radius: 6px;
+  border-radius: 4px;
   color: #e0e0f0; /* 浅灰紫基础文字色（高对比度+柔和感） */
-  line-height: 1.6;
 }
 
 /* VSCode Dark+ 优化配色（核心：高对比度、高鲜艳度，无灰暗色） */

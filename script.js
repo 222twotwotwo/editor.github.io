@@ -39,7 +39,7 @@ function setTheme(theme) {
   themeToggle.textContent = dark ? '☀️' : '🌙';
 }
 
-setTheme(localStorage.getItem('theme') || 'light');
+setTheme(localStorage.getItem('theme') || 'dark');
 
 themeToggle.onclick = () => {
   setTheme(
