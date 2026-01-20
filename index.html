@@ -24,6 +24,61 @@
 
 <body>
 
+<!-- 登录/注册模态框 -->
+<div id="authModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>🔐 Markdown Studio</h2>
+      <button class="close-modal" onclick="hideAuthModal()">×</button>
+    </div>
+    
+    <div id="loginSection">
+      <h3>登录到 Markdown Studio</h3>
+      <div class="form-group">
+        <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username">
+        <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password">
+        <button onclick="handleLogin()" class="btn-primary">登录</button>
+        <div class="form-links">
+          <a href="#" onclick="showRegisterSection()">注册新账号</a>
+          <span> | </span>
+          <span id="backendStatus">后端状态: 检查中...</span>
+        </div>
+      </div>
+    </div>
+    
+    <div id="registerSection" style="display: none;">
+      <h3>创建新账号</h3>
+      <div class="form-group">
+        <input type="text" id="registerUsername" placeholder="用户名 (3-50位)" autocomplete="username">
+        <input type="email" id="registerEmail" placeholder="邮箱地址" autocomplete="email">
+        <input type="password" id="registerPassword" placeholder="密码 (至少6位)" autocomplete="new-password">
+        <input type="password" id="registerConfirmPassword" placeholder="确认密码">
+        <button onclick="handleRegister()" class="btn-primary">注册</button>
+        <div class="form-links">
+          <a href="#" onclick="showLoginSection()">已有账号？登录</a>
+        </div>
+      </div>
+    </div>
+    
+    <div id="statusMessage" class="status-message"></div>
+    
+    <div class="api-test">
+      <small>
+        <a href="http://localhost:5000/health" target="_blank">后端健康检查</a> |
+        <a href="http://localhost:5000/api/test-db" target="_blank">数据库测试</a>
+      </small>
+    </div>
+  </div>
+</div>
+
+<!-- 用户信息显示 -->
+<div id="userInfo" style="display: none; position: fixed; top: 10px; right: 10px; background: rgba(255,255,255,0.9); padding: 8px 15px; border-radius: 20px; border: 1px solid #ddd; z-index: 1000;">
+  <span>👤 <span id="usernameDisplay"></span></span>
+  <button onclick="handleLogout()" style="margin-left: 10px; padding: 2px 8px; font-size: 12px;">退出</button>
+</div>
+
+
+
 <header class="topbar">
   <button id="toggleSidebar" title="侧边栏">☰</button>
   <div class="title">📝 仓库链接:https://github.com/222twotwotwo/editor.github.io</div>

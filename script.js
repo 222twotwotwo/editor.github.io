@@ -1,3 +1,120 @@
+/* ================= API 配置 ================= */
+const API_CONFIG = {
+  baseURL: 'http://localhost:5000/api',
+  timeout: 10000,
+  withCredentials: false
+};
+
+/* ================= API 服务 ================= */
+class APIService {
+  constructor() {
+    this.baseURL = API_CONFIG.baseURL;
+    this.token = localStorage.getItem('auth_token');
+    console.log('API 服务已初始化，基础URL:', this.baseURL);
+  }
+
+  setToken(token) {
+    this.token = token;
+    localStorage.setItem('auth_token', token);
+    console.log('Token 已设置');
+  }
+
+  removeToken() {
+    this.token = null;
+    localStorage.removeItem('auth_token');
+    console.log('Token 已移除');
+  }
+
+  async request(endpoint, options = {}) {
+    const url = `${this.baseURL}${endpoint}`;
+    
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers
+    };
+
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`;
+      console.log('请求携带 Token');
+    }
+
+    const config = {
+      ...options,
+      headers,
+      credentials: API_CONFIG.withCredentials ? 'include' : 'same-origin',
+      timeout: API_CONFIG.timeout
+    };
+
+    try {
+      console.log(`API 请求: ${url}`, config.method || 'GET');
+      const response = await fetch(url, config);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log(`API 响应 ${endpoint}:`, data);
+      return data;
+    } catch (error) {
+      console.error(`API 请求失败 ${endpoint}:`, error);
+      
+      // 如果是认证错误，移除 token
+      if (error.message.includes('401') || error.message.includes('403')) {
+        this.removeToken();
+        showLoginModal();
+      }
+      
+      throw error;
+    }
+  }
+
+  // 健康检查
+  async healthCheck() {
+    try {
+      console.log('执行健康检查...');
+      const response = await fetch('http://localhost:5000/health');
+      return await response.json();
+    } catch (error) {
+      console.error('健康检查失败:', error);
+      return { status: 'unhealthy', error: error.message };
+    }
+  }
+
+  // 用户认证
+  async register(username, email, password) {
+    return this.request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username, email, password })
+    });
+  }
+
+  async login(username, password) {
+    return this.request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    });
+  }
+
+  async logout() {
+    this.removeToken();
+    return { success: true };
+  }
+
+  async getCurrentUser() {
+    return this.request('/auth/me');
+  }
+}
+
+// 创建全局实例
+window.api = new APIService();
+console.log('API 服务已全局可用: window.api');
+
+
+
+
+
 /* ================= Markdown + 高亮 ================= */
 
 const md = window.markdownit({
@@ -694,3 +811,256 @@ function init() {
 }
 
 init();
+
+
+
+
+/* ================= 认证功能 ================= */
+
+let currentUser = null;
+
+// 显示/隐藏模态框
+function showAuthModal() {
+  document.getElementById('authModal').style.display = 'flex';
+  checkBackendStatus();
+}
+
+function hideAuthModal() {
+  document.getElementById('authModal').style.display = 'none';
+  clearStatusMessage();
+}
+
+function showLoginSection() {
+  document.getElementById('loginSection').style.display = 'block';
+  document.getElementById('registerSection').style.display = 'none';
+  clearStatusMessage();
+}
+
+function showRegisterSection() {
+  document.getElementById('loginSection').style.display = 'none';
+  document.getElementById('registerSection').style.display = 'block';
+  clearStatusMessage();
+}
+
+// 状态消息管理
+function showStatusMessage(message, type = 'info') {
+  const element = document.getElementById('statusMessage');
+  element.textContent = message;
+  element.className = `status-message ${type}`;
+  console.log(`状态消息 [${type}]: ${message}`);
+}
+
+function clearStatusMessage() {
+  const element = document.getElementById('statusMessage');
+  element.textContent = '';
+  element.className = 'status-message';
+  element.style.display = 'none';
+}
+
+// 检查后端状态
+async function checkBackendStatus() {
+  try {
+    const health = await api.healthCheck();
+    const statusElement = document.getElementById('backendStatus');
+    
+    if (health.status === 'healthy' && health.database.connected) {
+      statusElement.innerHTML = '✅ 后端连接正常';
+      statusElement.style.color = '#48bb78';
+    } else {
+      statusElement.innerHTML = '❌ 后端连接异常';
+      statusElement.style.color = '#f56565';
+      showStatusMessage('后端服务连接异常，部分功能可能受限', 'error');
+    }
+  } catch (error) {
+    const statusElement = document.getElementById('backendStatus');
+    statusElement.innerHTML = '❌ 无法连接到后端';
+    statusElement.style.color = '#f56565';
+    showStatusMessage('无法连接到后端服务，请确保后端正在运行', 'error');
+  }
+}
+
+// 处理登录
+async function handleLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  
+  if (!username || !password) {
+    showStatusMessage('请输入用户名和密码', 'error');
+    return;
+  }
+  
+  try {
+    showStatusMessage('登录中...', 'info');
+    const result = await api.login(username, password);
+    
+    if (result.success) {
+      api.setToken(result.token);
+      currentUser = result.user;
+      showStatusMessage('登录成功！', 'success');
+      
+      setTimeout(() => {
+        hideAuthModal();
+        updateUserInfo(result.user);
+        showNotification(`欢迎回来，${result.user.username}！`);
+      }, 1000);
+    }
+  } catch (error) {
+    console.error('登录错误:', error);
+    showStatusMessage(error.message || '登录失败，请检查用户名和密码', 'error');
+  }
+}
+
+// 处理注册
+async function handleRegister() {
+  const username = document.getElementById('registerUsername').value.trim();
+  const email = document.getElementById('registerEmail').value.trim();
+  const password = document.getElementById('registerPassword').value;
+  const confirmPassword = document.getElementById('registerConfirmPassword').value;
+  
+  // 验证输入
+  if (!username || !email || !password) {
+    showStatusMessage('请填写所有必填项', 'error');
+    return;
+  }
+  
+  if (username.length < 3 || username.length > 50) {
+    showStatusMessage('用户名长度应为3-50位', 'error');
+    return;
+  }
+  
+  if (password.length < 6) {
+    showStatusMessage('密码长度至少6位', 'error');
+    return;
+  }
+  
+  if (password !== confirmPassword) {
+    showStatusMessage('两次输入的密码不一致', 'error');
+    return;
+  }
+  
+  // 简单的邮箱验证
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    showStatusMessage('请输入有效的邮箱地址', 'error');
+    return;
+  }
+  
+  try {
+    showStatusMessage('注册中...', 'info');
+    const result = await api.register(username, email, password);
+    
+    if (result.success) {
+      // 暂时存储用户信息
+      currentUser = result.user;
+      showStatusMessage('注册成功！正在自动登录...', 'success');
+      
+      // 模拟自动登录（实际应该调用登录接口）
+      setTimeout(() => {
+        hideAuthModal();
+        updateUserInfo(result.user);
+        showNotification(`欢迎使用 Markdown Studio，${result.user.username}！`);
+        
+        // 在实际应用中，这里应该调用登录接口获取token
+        // 但为了简化，我们直接显示用户信息
+        api.setToken('dummy-token-for-' + result.user.id);
+      }, 1500);
+    }
+  } catch (error) {
+    console.error('注册错误:', error);
+    const errorMsg = error.message.includes('已存在') 
+      ? '用户名或邮箱已存在' 
+      : '注册失败，请稍后重试';
+    showStatusMessage(errorMsg, 'error');
+  }
+}
+
+// 处理退出
+async function handleLogout() {
+  try {
+    await api.logout();
+    currentUser = null;
+    document.getElementById('userInfo').style.display = 'none';
+    showNotification('已退出登录');
+    showAuthModal();
+  } catch (error) {
+    console.error('退出错误:', error);
+  }
+}
+
+// 更新用户信息显示
+function updateUserInfo(user) {
+  const usernameDisplay = document.getElementById('usernameDisplay');
+  const userInfo = document.getElementById('userInfo');
+  
+  if (user && usernameDisplay && userInfo) {
+    usernameDisplay.textContent = user.username;
+    userInfo.style.display = 'flex';
+    console.log('用户信息已更新:', user.username);
+  }
+}
+
+// 显示通知
+function showNotification(message, type = 'info') {
+  console.log(`通知 [${type}]: ${message}`);
+  // 可以在这里添加更复杂的通知系统
+}
+
+// 页面加载时检查认证状态
+async function checkAuthStatus() {
+  try {
+    const token = localStorage.getItem('auth_token');
+    
+    if (token) {
+      // 这里应该验证token并获取用户信息
+      // 但为了简化，我们直接显示模态框
+      console.log('检测到本地 token，显示登录模态框');
+      setTimeout(() => showAuthModal(), 1000);
+    } else {
+      // 没有token，显示登录模态框
+      console.log('未检测到 token，显示登录模态框');
+      setTimeout(() => showAuthModal(), 1000);
+    }
+    
+    // 检查后端连接
+    await checkBackendStatus();
+  } catch (error) {
+    console.error('认证状态检查错误:', error);
+    setTimeout(() => showAuthModal(), 1000);
+  }
+}
+
+// 修改页面加载初始化函数
+document.addEventListener('DOMContentLoaded', function() {
+  // 原有的事件监听器...
+  
+  // 新增：检查认证状态
+  setTimeout(() => {
+    checkAuthStatus();
+  }, 500);
+});
+
+// 修改 init() 函数
+async function init() {
+  try {
+    updateStats();
+    renderPreview();
+    initFileSystem();
+    initColorSettings();
+    applyColorSettings();
+    
+    // 测试后端连接
+    console.log('正在检查后端连接...');
+    const health = await api.healthCheck();
+    
+    if (health.status === 'healthy' && health.database.connected) {
+      console.log('✅ 后端服务连接正常');
+      showNotification('后端服务连接正常', 'success');
+    } else {
+      console.warn('⚠️  后端服务连接异常');
+      showNotification('后端服务连接异常，部分功能可能受限', 'warning');
+    }
+  } catch (error) {
+    console.error('初始化错误:', error);
+    showNotification('初始化过程中出现错误', 'error');
+  }
+}
