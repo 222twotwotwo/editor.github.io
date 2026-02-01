@@ -24,8 +24,43 @@
 ```bash
 npm install # 已经完成
 
-开发模式  npm run dev #需要使用cmd在当前项目目录运行,然后打开http://localhost:3000 注意端口被占用的问题 
+开发模式  npm run dev #需要使用shell在当前项目目录运行,然后打开http://localhost:3000 注意端口被占用的问题 
 
 生成构建  npm run build
 
 预览生产版本  npm run preview
+
+
+├── public/                              # 静态资源
+│   ├── audio/
+│   │   ├── edit.mp3
+│   │   ├── export.mp3
+│   │   └── wallpaper.png
+│   └──                  
+├── src/
+│   ├── components/                     # Vue组件
+│   │   ├── SidebarLeft.vue             # 侧边栏左侧组件
+│   │   ├── SidebarRight.vue            # 侧边栏右侧组件
+│   │   ├── TopBar.vue                  # 顶部栏组件
+│   │   ├── EditorPane.vue              # 编辑区域组件
+│   │   └── FileItem.vue                # 文件项组件
+│   ├── composables/                    # 组合式函数
+│   │   ├── useFileSystem.js            # 文件系统管理
+│   │   ├── useTheme.js                 # 主题管理
+│   │   ├── useGitHub.js                # GitHub 集成
+│   │   ├── useHighlightColors.js       # 代码高亮颜色管理
+│   │   ├── useSidebar.js               # 侧边栏管理
+│   │   └── useAudio.js                 # 音频播放模块
+│   ├── utils/                          # 通用工具函数 
+│   │   ├── markdownParser.js            # Markdown解析器
+│   │   ├── exportUtils.js              # 导出工具函数
+│   │   └── audioManager.js             # 音频管理模块
+│   ├── styles/                         # 样式文件
+│   │   └── main.css
+│   ├── App.vue                         # 根组件
+│   └── main.js                         # 应用入口
+├── index.html                          # 开发入口
+├── package.json                        # 项目配置
+├── package-lock.json                   # 依赖锁文件
+├── vite.config.js                      # Vite配置
+├── README.md                           # 项目说明
