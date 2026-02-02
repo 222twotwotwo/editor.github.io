@@ -35,10 +35,12 @@ npm install # 已经完成
 │   ├── audio/
 │   │   ├── edit.mp3
 │   │   ├── export.mp3
+│   │   ├── pet.png
 │   │   └── wallpaper.png
 │   └──                  
 ├── src/
 │   ├── components/                     # Vue组件
+│   │   ├── DesktopPet.vue
 │   │   ├── SidebarLeft.vue             # 侧边栏左侧组件
 │   │   ├── SidebarRight.vue            # 侧边栏右侧组件
 │   │   ├── TopBar.vue                  # 顶部栏组件
@@ -46,7 +48,9 @@ npm install # 已经完成
 │   │   └── FileItem.vue                # 文件项组件
 │   ├── composables/                    # 组合式函数
 │   │   ├── useFileSystem.js            # 文件系统管理
+
 │   │   ├── useTheme.js                 # 主题管理
+│   │   ├── useDesktopPet.js            # 桌面宠物管理
 │   │   ├── useGitHub.js                # GitHub 集成
 │   │   ├── useHighlightColors.js       # 代码高亮颜色管理
 │   │   ├── useSidebar.js               # 侧边栏管理

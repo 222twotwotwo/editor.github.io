@@ -1,3 +1,4 @@
+
 import { ref, onMounted } from 'vue'
 
 export function useAudio() {
@@ -6,20 +7,28 @@ export function useAudio() {
   
   // 添加播放状态跟踪
   const editPlaying = ref(false)
+  const petPlaying = ref(false)
   
   // 使用单个Audio实例（和原项目一致）
-  let editAudio, exportAudio
+  let editAudio, exportAudio, petAudio
 
   onMounted(() => {
     editAudio = new Audio('/audio/edit.mp3')
     exportAudio = new Audio('/audio/export.mp3')
+    petAudio = new Audio('/audio/pet.mp3')
     
     editAudio.volume = 0.4
     exportAudio.volume = 0.6
+    petAudio.volume = 0.4  // 宠物音效使用较低音量
     
     // 监听编辑音效播放结束
     editAudio.addEventListener('ended', () => {
       editPlaying.value = false
+    })
+    
+    // 监听宠物音效播放结束
+    petAudio.addEventListener('ended', () => {
+      petPlaying.value = false
     })
 
     // 解锁音频
@@ -70,10 +79,50 @@ export function useAudio() {
     }
   }
 
+  const playPetSound = () => {
+    // 和编辑音效类似：音频未解锁、音效关闭、正在播放时跳过
+    if (!audioUnlocked.value || !soundEnabled.value || petPlaying.value) return
+    
+    petPlaying.value = true
+    petAudio.currentTime = 0
+    
+    const playPromise = petAudio.play()
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        petPlaying.value = false
+      })
+    }
+  }
+
+  const playSound = (src) => {
+    // 通用的音频播放函数，支持任意音频文件
+    if (!audioUnlocked.value || !soundEnabled.value) return false
+    
+    try {
+      // 创建临时音频对象
+      const audio = new Audio(src)
+      audio.volume = 0.5
+      
+      // 播放并返回Promise
+      return audio.play().then(() => {
+        return true
+      }).catch((error) => {
+        console.warn('音频播放失败:', error)
+        return false
+      })
+    } catch (error) {
+      console.error('音频创建失败:', error)
+      return Promise.resolve(false)
+    }
+  }
+
   return {
     soundEnabled,
     toggleSound,
     playEditSound,
-    playExportSound
+    playExportSound,
+    playPetSound,
+    playSound
   }
 }
