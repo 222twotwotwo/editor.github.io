@@ -1,0 +1,370 @@
+/* 社区页面样式 - 支持深色/浅色主题 */
+
+/* 定义社区页面的CSS变量 - 与编辑器主题保持一致 */
+.community-container {
+  background-color: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  padding-top: 60px;
+}
+
+/* 顶部导航栏 */
+.top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background-color: var(--panel);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.top-bar .logo {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #42b983;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-bar .logo-icon {
+  font-size: 1.5rem;
+}
+
+.top-bar .nav-btns {
+  display: flex;
+  gap: 10px;
+}
+
+.top-bar .btn {
+  padding: 6px 12px;
+  border: 1px solid #42b983;
+  background-color: var(--panel);
+  color: #42b983;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.top-bar .btn:hover {
+  background-color: #42b983;
+  color: #fff;
+}
+
+.top-bar .login-btn {
+  background: #42b983;
+  color: white;
+  border: 1px solid #42b983;
+}
+
+.top-bar .login-btn:hover {
+  background: #3aa876;
+  color: white;
+}
+
+.top-bar .theme-btn {
+  background-color: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.top-bar .theme-btn:hover {
+  background-color: var(--border);
+  color: var(--text);
+}
+
+/* 主内容区 */
+.home-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+/* 首页横幅 */
+.home-banner {
+  text-align: center;
+  margin-bottom: 60px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-banner h1 {
+  font-size: 2.2rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 16px;
+}
+
+.home-banner p {
+  font-size: 1.1rem;
+  color: var(--text);
+  opacity: 0.8;
+  line-height: 1.6;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* 功能卡片容器 */
+.function-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 30px;
+  justify-content: center;
+}
+
+/* 卡片基础样式 */
+.function-cards .card {
+  background-color: var(--panel);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  padding: 30px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  color: inherit;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+}
+
+[data-theme="dark"] .function-cards .card {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+
+.function-cards .card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+
+[data-theme="dark"] .function-cards .card:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+
+.function-cards .card.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.function-cards .card.disabled:hover {
+  transform: none;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+
+.function-cards .card-icon {
+  font-size: 3rem;
+  margin-bottom: 20px;
+  color: #42b983;
+}
+
+.function-cards .card h3 {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.function-cards .card p {
+  font-size: 0.95rem;
+  color: var(--text);
+  opacity: 0.7;
+  line-height: 1.6;
+  padding: 0 10px;
+}
+
+/* 卡片配色 - 保持原有颜色，但调整透明度 */
+.function-cards .card:nth-child(2) .card-icon { color: #2196f3; }
+.function-cards .card:nth-child(3) .card-icon { color: #ff9800; }
+.function-cards .card:nth-child(4) .card-icon { color: #9c27b0; }
+
+/* 帖子列表区域 */
+.posts-section {
+  margin-top: 60px;
+}
+
+.posts-section h2 {
+  font-size: 1.8rem;
+  margin-bottom: 30px;
+  color: var(--text);
+}
+
+.posts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.post-card {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  transition: all 0.3s ease;
+  border: 1px solid var(--border);
+}
+
+[data-theme="dark"] .post-card {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+
+.post-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+[data-theme="dark"] .post-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+
+.post-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  margin-right: 12px;
+}
+
+.post-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.author-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.post-time {
+  font-size: 0.85rem;
+  color: var(--text);
+  opacity: 0.7;
+}
+
+.post-tag {
+  background: var(--border);
+  color: var(--text);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.post-content h3 {
+  margin: 0 0 10px 0;
+  color: var(--text);
+}
+
+.post-content p {
+  color: var(--text);
+  opacity: 0.8;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.post-footer {
+  display: flex;
+  gap: 20px;
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border);
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: var(--bg);
+  color: #42b983;
+  opacity: 1;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 底部版权 */
+.home-footer {
+  text-align: center;
+  margin-top: 80px;
+  padding-top: 30px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+/* 响应式适配 */
+@media (max-width: 768px) {
+  .home-banner h1 {
+    font-size: 1.8rem;
+  }
+  
+  .function-cards {
+    gap: 20px;
+  }
+  
+  .home-main {
+    padding: 30px 15px;
+  }
+  
+  .top-bar {
+    padding: 0 15px;
+  }
+  
+  .top-bar .btn span:not(.nav-icon) {
+    display: none;
+  }
+  
+  .top-bar .btn {
+    padding: 8px;
+  }
+}
+
+/* 滚动条样式 - 与编辑器保持一致 */
+.community-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.community-container::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+.community-container::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.community-container::-webkit-scrollbar-thumb:hover {
+  background: #42b983;
+}
