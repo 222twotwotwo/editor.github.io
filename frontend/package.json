@@ -13,6 +13,12 @@
     "highlight.js": "^11.8.0",
     "html2pdf.js": "^0.10.1",
     "markdown-it": "^13.0.1",
+    "markdown-it-container": "^4.0.0",
+    "markdown-it-footnote": "^4.0.0",
+    "markdown-it-mark": "^4.0.0",
+    "markdown-it-sub": "^2.0.0",
+    "markdown-it-sup": "^2.0.0",
+    "markdown-it-task-lists": "^2.1.1",
     "vue": "^3.3.0",
     "vue-router": "^4.2.0"
   },
