@@ -1,15 +1,37 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>" />
-  <title>Markdown Studio - 轻量编辑器</title>
-  <script type="module" crossorigin src="/assets/index-8f89c4fe.js"></script>
-  <link rel="stylesheet" href="/assets/index-34b277bb.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>精简页面示例</title>
+  <!-- 引入CSS -->
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app"></div>
-  
+  <div class="container">
+    <!-- 头部 -->
+    <header class="header">
+      <h1 class="header-title">通用内容列表</h1>
+    </header>
+
+    <!-- 内容列表 -->
+    <main class="content">
+      <div class="list" id="contentList">
+        <!-- 列表项由JS动态生成 -->
+      </div>
+
+      <!-- 详情弹窗 -->
+      <div class="modal" id="detailModal">
+        <div class="modal-content">
+          <span class="close-btn" id="closeModal">&times;</span>
+          <h2 class="modal-title" id="modalTitle"></h2>
+          <p class="modal-desc" id="modalDesc"></p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 引入JS -->
+  <script src="script.js"></script>
 </body>
 </html>
