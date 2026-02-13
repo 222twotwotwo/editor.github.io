@@ -21,7 +21,7 @@
 - **认证 API**：注册、登录、获取用户资料
 - **文档 API**：上传、列表、获取、更新、删除、搜索、统计（需 JWT）
 - **JWT**：签发与校验 Token，支持受保护接口
-- **MySQL**：用户表与文档表存储，自动建库建表与默认账号同步
+- **MySQL**：用户表、文档表、文档点赞表存储；建议首次部署执行 `backend/databaseinit/init.sql` 完成建库建表，后端在数据库不存在时会自动建库及用户表
 - **CORS**：支持本地多端口前端开发
 - **健康检查**：`/health` 用于存活探测
 
@@ -40,7 +40,7 @@
 ## 项目目录结构
 
 ```
-上传功能/
+项目根目录/
 ├── backend/                          # 后端 (Go + Gin)
 │   ├── cmd/
 │   │   └── server/
@@ -51,26 +51,28 @@
 │   │   ├── database/
 │   │   │   └── mysql.go              # MySQL 连接与建库建表
 │   │   ├── handlers/
-│   │   │   ├── auth_handler.go       # 注册/登录/个人资料
-│   │   │   ├── document_handler.go   # 文档 CRUD、搜索、统计
-│   │   │   └── user_handler.go       # 用户相关
+│   │   │   ├── auth_handler.go      # 注册/登录/个人资料
+│   │   │   ├── document_handler.go  # 文档 CRUD、搜索、统计、图片上传
+│   │   │   ├── post_handler.go      # 社区贴文列表/详情/点赞
+│   │   │   └── user_handler.go      # 用户相关（可选）
 │   │   ├── middleware/
-│   │   │   ├── cors.go               # CORS
-│   │   │   ├── jwt.go                # JWT 鉴权
-│   │   │   └── logger.go             # 日志
+│   │   │   ├── cors.go              # CORS
+│   │   │   ├── jwt.go               # JWT 鉴权
+│   │   │   └── logger.go            # 日志
 │   │   ├── models/
-│   │   │   ├── document.go           # 文档模型
-│   │   │   └── user.go               # 用户模型
+│   │   │   ├── document.go          # 文档模型
+│   │   │   ├── post.go              # 社区贴文模型
+│   │   │   └── user.go              # 用户模型
 │   │   ├── server/
-│   │   │   └── server.go             # 路由与服务启动
+│   │   │   └── server.go            # 路由与服务启动
 │   │   └── utils/
-│   │       ├── jwt.go                # JWT 工具
-│   │       └── password.go           # 密码工具
+│   │       ├── jwt.go               # JWT 工具
+│   │       └── password.go          # 密码工具
 │   ├── pkg/
 │   │   └── api/
 │   │       └── response.go          # 统一响应格式
 │   ├── databaseinit/
-│   │   └── init.sql                  # 建库建表（users、documents）
+│   │   └── init.sql                  # 完整建库建表（users、documents、document_likes，含 image_path）
 │   ├── scripts/
 │   │   ├── run.bat                   # Windows 启动脚本
 │   │   ├── init-db.bat               # 初始化数据库脚本
@@ -141,7 +143,7 @@
 
 - **Node.js** 16+（前端）
 - **Go** 1.21+（后端）
-- **MySQL** 8.x（可选：后端会自动建库建表）
+- **MySQL** 8.x（推荐：首次使用请执行 `backend/databaseinit/init.sql` 完成建库建表）
 
 ---
 
@@ -172,7 +174,9 @@ SERVER_PORT=8080
 GIN_MODE=debug
 ```
 
-启动后端（程序会加载 `.env`，若数据库不存在会尝试建库建表）：
+**首次使用**：请先执行数据库初始化（在 MySQL 中执行 `backend/databaseinit/init.sql`，或使用 `scripts\init-db.bat`）。后端在数据库不存在时会自动建库和用户表，但文档表、点赞表等需通过 init.sql 创建。
+
+启动后端（程序会加载 `.env`）：
 
 ```bash
 go run ./cmd/server/main.go
@@ -210,7 +214,7 @@ npm run dev
 ### 3. 访问与测试账号
 
 - 浏览器打开：**http://localhost:3000**
-- 测试账号（首次建库或脚本初始化后可用）：
+- 测试账号（执行过 `databaseinit/init.sql` 或后端自动建库后可用）：
   - 用户名：`admin` 或 `testuser`
   - 密码：`123456`
 
@@ -242,6 +246,8 @@ npm run dev
 - **删除文档**：`DELETE /api/documents/:id`
 
 （文档相关接口均需 `Authorization: Bearer <token>`。）
+
+- **社区贴文**：`GET /api/posts`（分页）、`GET /api/posts/:id`（详情）、`POST /api/posts/:id/like`（点赞，需 Bearer）
 
 ---
 

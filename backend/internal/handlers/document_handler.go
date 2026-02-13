@@ -1,15 +1,22 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"markdown-editor-backend/internal/models"
 	"markdown-editor-backend/pkg/api"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"os"
 )
+
+const uploadDir = "uploads"
+const imagesSubdir = "images"
 
 type DocumentHandler struct {
 	db *sql.DB
@@ -63,8 +70,8 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 	fileSize := int64(len([]byte(content)))
 
 	result, err := h.db.Exec(
-		"INSERT INTO documents (user_id, title, filename, content, file_size) VALUES (?, ?, ?, ?, ?)",
-		userID, title, filename, content, fileSize,
+		"INSERT INTO documents (user_id, title, filename, content, file_size, image_path) VALUES (?, ?, ?, ?, ?, ?)",
+		userID, title, filename, content, fileSize, nil,
 	)
 	if err != nil {
 		api.Error(c, http.StatusInternalServerError, "上传文档失败")
@@ -77,6 +84,86 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 		"title":      title,
 		"filename":   filename,
 		"file_size":  fileSize,
+	})
+}
+
+// UploadImage 拖拽上传图片：保存到 uploads/images/，并在数据库创建一条文档，content 为 Markdown 图片链接；删除该文档时会同步删除图片文件
+func (h *DocumentHandler) UploadImage(c *gin.Context) {
+	userID, ok := h.getUserID(c)
+	if !ok {
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		api.Error(c, http.StatusBadRequest, "请选择要上传的图片文件")
+		return
+	}
+
+	// 只允许图片类型
+	ct := file.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "image/") {
+		api.Error(c, http.StatusBadRequest, "仅支持上传图片文件")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext == "" {
+		ext = ".png"
+	}
+	allowedExt := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true}
+	if !allowedExt[ext] {
+		api.Error(c, http.StatusBadRequest, "不支持的图片格式")
+		return
+	}
+
+	// 生成唯一文件名
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		api.Error(c, http.StatusInternalServerError, "生成文件名失败")
+		return
+	}
+	saveName := hex.EncodeToString(b) + ext
+	relPath := imagesSubdir + string(filepath.Separator) + saveName
+	dir := filepath.Join(uploadDir, imagesSubdir)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		api.Error(c, http.StatusInternalServerError, "创建上传目录失败")
+		return
+	}
+	fullPath := filepath.Join(dir, saveName)
+	if err := c.SaveUploadedFile(file, fullPath); err != nil {
+		api.Error(c, http.StatusInternalServerError, "保存图片失败")
+		return
+	}
+
+	// 图片访问 URL（相对路径，前端可拼接 baseURL）
+	urlPath := "/uploads/" + imagesSubdir + "/" + saveName
+	content := "![](" + urlPath + ")"
+	title := file.Filename
+	if title == "" {
+		title = "image" + ext
+	}
+	filename := title
+	if !strings.HasSuffix(strings.ToLower(filename), ".md") {
+		filename += ".md"
+	}
+	fileSize := file.Size
+
+	result, err := h.db.Exec(
+		"INSERT INTO documents (user_id, title, filename, content, file_size, image_path) VALUES (?, ?, ?, ?, ?, ?)",
+		userID, title, filename, content, fileSize, relPath,
+	)
+	if err != nil {
+		os.Remove(fullPath)
+		api.Error(c, http.StatusInternalServerError, "创建文档记录失败")
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	api.Success(c, gin.H{
+		"id":      id,
+		"url":     urlPath,
+		"content": content,
 	})
 }
 
@@ -205,7 +292,7 @@ func (h *DocumentHandler) UpdateDocument(c *gin.Context) {
 	})
 }
 
-// DeleteDocument 删除文档
+// DeleteDocument 删除文档；若该文档为图片文档（含 image_path），会先删除服务器上的图片文件再删记录
 func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	userID, ok := h.getUserID(c)
 	if !ok {
@@ -217,6 +304,13 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 	if err != nil {
 		api.Error(c, http.StatusBadRequest, "无效的文档 ID")
 		return
+	}
+
+	var imagePath sql.NullString
+	err = h.db.QueryRow("SELECT image_path FROM documents WHERE id = ? AND user_id = ?", id, userID).Scan(&imagePath)
+	if err == nil && imagePath.Valid && imagePath.String != "" {
+		fullPath := filepath.Join(uploadDir, imagePath.String)
+		_ = os.Remove(fullPath)
 	}
 
 	result, err := h.db.Exec("DELETE FROM documents WHERE id = ? AND user_id = ?", id, userID)

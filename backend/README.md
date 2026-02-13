@@ -16,7 +16,8 @@ backend/
 │   │   └── mysql.go             # MySQL 连接与建库建表
 │   ├── handlers/
 │   │   ├── auth_handler.go      # 注册/登录/个人资料
-│   │   ├── document_handler.go  # 文档 CRUD、搜索、统计
+│   │   ├── document_handler.go  # 文档 CRUD、搜索、统计、图片上传
+│   │   ├── post_handler.go      # 社区贴文列表/详情/点赞
 │   │   └── user_handler.go      # 用户相关
 │   ├── middleware/
 │   │   ├── cors.go              # CORS
@@ -24,6 +25,7 @@ backend/
 │   │   └── logger.go            # 日志
 │   ├── models/
 │   │   ├── document.go          # 文档模型
+│   │   ├── post.go              # 社区贴文模型
 │   │   └── user.go              # 用户模型
 │   ├── server/
 │   │   └── server.go            # 路由与服务启动
@@ -34,7 +36,7 @@ backend/
 │   └── api/
 │       └── response.go          # 统一响应格式
 ├── databaseinit/
-│   └── init.sql                 # 建库建表（users、documents）
+│   └── init.sql                 # 完整建库建表（users、documents、document_likes，含 image_path）
 ├── scripts/
 │   ├── run.bat                  # Windows 启动脚本
 │   ├── init-db.bat              # 初始化数据库脚本
@@ -79,58 +81,38 @@ scripts\run.bat
 
 ## 默认账号
 
-首次建库或执行 `databaseinit/init.sql` 后可用：
+执行 `databaseinit/init.sql` 或后端自动建库后可用（密码与后端 `ensureDefaultPasswords` 一致）：
 
 - 用户名：`admin` 或 `testuser`
 - 密码：`123456`
-
-（注：示例用户密码哈希对应 `password123`，若需 `123456` 可用 `scripts/genhash.go` 生成新哈希后更新 init.sql。）
 
 ## 数据库设计
 
 ### 数据库与表
 
 - 数据库：`markdown_editor`
-- 表：`users`、`documents`
+- 表：`users`、`documents`、`document_likes`
+
+### 数据库初始化
+
+- **全新安装**：在 MySQL 中执行 **`databaseinit/init.sql`** 即可建库并创建全部表（含 `users`、`documents`、`document_likes`，文档表含 `image_path` 字段）。
+- **后端行为**：若数据库不存在，后端启动时会自动创建数据库和 `users` 表，但**不会**创建 `documents`、`document_likes`，因此建议首次部署时主动执行 init.sql。
+- 执行示例：`mysql -u root -p < databaseinit/init.sql` 或使用 `scripts\init-db.bat`。
 
 ### users 表
 
-```sql
-CREATE DATABASE IF NOT EXISTS markdown_editor;
-USE markdown_editor;
-
-CREATE TABLE IF NOT EXISTS `users` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) NOT NULL,
-  `email` varchar(100) NOT NULL,
-  `password_hash` varchar(255) NOT NULL,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq_username` (`username`),
-  UNIQUE KEY `uniq_email` (`email`),
-  KEY `idx_created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
+- `id`, `username`, `email`, `password_hash`, `created_at`, `updated_at`
+- 唯一约束：`username`、`email`
 
 ### documents 表
 
-```sql
-CREATE TABLE IF NOT EXISTS `documents` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
-  `title` varchar(255) NOT NULL,
-  `filename` varchar(255) NOT NULL,
-  `content` longtext NOT NULL,
-  `file_size` bigint NOT NULL DEFAULT '0',
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_user_id` (`user_id`),
-  KEY `idx_updated_at` (`updated_at`),
-  KEY `idx_title` (`title`(100))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-```
+- `id`, `user_id`, `title`, `filename`, `content`, `file_size`, `image_path`, `created_at`, `updated_at`
+- `image_path`：拖拽上传图片时保存相对路径，删除文档时同步删除服务器文件；普通文档为 NULL。
+
+### document_likes 表
+
+- `id`, `user_id`, `document_id`, `created_at`
+- 社区点赞：同一用户可对同一文档多次点赞（无唯一约束）。
 
 完整建表语句见 **databaseinit/init.sql**。
 
@@ -157,6 +139,13 @@ CREATE TABLE IF NOT EXISTS `documents` (
 - `GET /api/documents/:id` — 获取单篇文档
 - `PUT /api/documents/:id` — 更新文档（body: title, content）
 - `DELETE /api/documents/:id` — 删除文档
+- `POST /api/documents/upload-image` — 拖拽上传图片（multipart/form-data，需 JWT）
+
+### 社区贴文（部分需 JWT）
+
+- `GET /api/posts` — 贴文列表（分页：page, limit，无需认证）
+- `GET /api/posts/:id` — 贴文详情（无需认证）
+- `POST /api/posts/:id/like` — 点赞（需 JWT）
 
 ### 其他
 

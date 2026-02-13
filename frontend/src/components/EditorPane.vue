@@ -1,5 +1,9 @@
 <template>
-  <div class="editor-container">
+  <div
+    class="editor-container"
+    @dragover.prevent="onDragOver"
+    @drop.prevent="onDrop"
+  >
     <template v-if="!aiEnabled">
       <textarea
         ref="editorRef"
@@ -35,6 +39,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAiContinuationSettings } from '../composables/useAiContinuationSettings'
+import { documentAPI } from '../services/api'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -465,6 +470,60 @@ function onAiPaste(e) {
   const currentText = getPlainText()
   lastPlainText = currentText
   emit('update:modelValue', currentText)
+}
+
+// ----- 拖拽上传图片 -----
+function onDragOver(e) {
+  if (e.dataTransfer?.types?.includes('Files')) e.dataTransfer.dropEffect = 'copy'
+}
+
+async function onDrop(e) {
+  const files = e.dataTransfer?.files
+  if (!files?.length) return
+  const images = Array.from(files).filter((f) => f.type.startsWith('image/'))
+  if (!images.length) return
+  const insertText = (text, withNewline = true) => {
+    const prefix = withNewline ? '\n\n' : ''
+    const suffix = withNewline ? '\n\n' : ''
+    const toInsert = prefix + text + suffix
+    if (aiEnabled.value) {
+      const editor = editorRef.value
+      if (editor && document.execCommand) {
+        editor.focus()
+        document.execCommand('insertText', false, toInsert)
+        lastPlainText = getPlainText()
+        emit('update:modelValue', lastPlainText)
+        triggerUserAction()
+      }
+    } else {
+      const ta = editorRef.value
+      if (!ta) return
+      const start = ta.selectionStart ?? props.modelValue.length
+      const end = ta.selectionEnd ?? start
+      const before = (props.modelValue || '').slice(0, start)
+      const after = (props.modelValue || '').slice(end)
+      const next = before + toInsert + after
+      emit('update:modelValue', next)
+      nextTick(() => {
+        const pos = start + toInsert.length
+        ta.setSelectionRange(pos, pos)
+        ta.focus()
+      })
+    }
+  }
+  for (let i = 0; i < images.length; i++) {
+    const file = images[i]
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const res = await documentAPI.uploadImage(formData)
+      const content = res?.data?.content ?? res?.content
+      if (content) insertText(content, i === 0 && !props.modelValue?.trim() ? false : true)
+    } catch (err) {
+      console.error('上传图片失败', err)
+      if (images.length === 1) alert(err?.message || '上传图片失败，请检查登录与网络')
+    }
+  }
 }
 
 function setEditorContent(text) {

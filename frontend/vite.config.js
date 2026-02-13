@@ -22,6 +22,11 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_API_BASE_URL || 'http://localhost:8080',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '/api')
+        },
+        // 上传图片静态资源，预览时可从同源加载
+        '/uploads': {
+          target: env.VITE_API_BASE_URL || 'http://localhost:8080',
+          changeOrigin: true
         }
       }
     },

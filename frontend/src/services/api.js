@@ -84,6 +84,17 @@ export const healthAPI = { check: () => api.get('/health') }
 
 export const documentAPI = {
   upload: (data) => api.post('/api/documents/upload', data),
+  uploadImage: (formData) => {
+    const token = localStorage.getItem('token')
+    return api.post('/api/documents/upload-image', formData, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      // 不设置 Content-Type，由浏览器为 FormData 自动添加 multipart/form-data; boundary=...
+      transformRequest: [(data, headers) => {
+        if (data instanceof FormData) delete headers['Content-Type']
+        return data
+      }]
+    })
+  },
   list: () => api.get('/api/documents/list'),
   get: (id) => api.get(`/api/documents/${id}`),
   update: (id, data) => api.put(`/api/documents/${id}`, data),

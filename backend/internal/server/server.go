@@ -110,18 +110,8 @@ func (s *Server) setupRouter() {
 		}
 	}
 
-	// 404处理
-	router.NoRoute(func(c *gin.Context) {
-		c.JSON(404, gin.H{
-			"error":   "Not Found",
-			"message": "The requested endpoint does not exist",
-			"path":    c.Request.URL.Path,
-		})
-	})
-
-	s.router = router
-
-	// 在 setupRouter 函数中添加文档处理器和路由
+	// 上传图片静态目录（供图片链接访问）
+	router.Static("/uploads", "./uploads")
 
 	// 文档处理器
 	documentHandler := handlers.NewDocumentHandler(s.db)
@@ -131,6 +121,7 @@ func (s *Server) setupRouter() {
 	documents.Use(middleware.JWTAuth(jwt))
 	{
 		documents.POST("/upload", documentHandler.UploadDocument)
+		documents.POST("/upload-image", documentHandler.UploadImage)
 		documents.GET("/list", documentHandler.GetDocuments)
 		documents.GET("/stats", documentHandler.GetDocumentStats)
 		documents.GET("/search", documentHandler.SearchDocuments)
@@ -138,6 +129,17 @@ func (s *Server) setupRouter() {
 		documents.PUT("/:id", documentHandler.UpdateDocument)
 		documents.DELETE("/:id", documentHandler.DeleteDocument)
 	}
+
+	// 404 处理（放在静态和 API 之后）
+	router.NoRoute(func(c *gin.Context) {
+		c.JSON(404, gin.H{
+			"error":   "Not Found",
+			"message": "The requested endpoint does not exist",
+			"path":    c.Request.URL.Path,
+		})
+	})
+
+	s.router = router
 }
 
 func (s *Server) Run() error {
