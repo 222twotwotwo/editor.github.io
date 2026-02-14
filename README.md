@@ -132,6 +132,8 @@
 │   ├── .env.development
 │   └── README.md                     # 前端说明
 │
+├── deploy/
+│   └── nginx.conf.example           # ECS 部署 Nginx 同域反代示例
 └── README.md                        # 本文件
 ```
 
@@ -226,6 +228,15 @@ npm run dev
 | 前端开发   | `cd frontend && npm run dev` |
 | 前端构建   | `cd frontend && npm run build` |
 | 前端预览   | `cd frontend && npm run preview` |
+
+---
+
+## 部署到阿里云 ECS
+
+1. **后端**：在 ECS 上配置 `.env`（或环境变量），必改项包括 `DB_HOST`（本机 MySQL 填 `127.0.0.1`，RDS 填内网地址）、`JWT_SECRET`（生产用强随机密钥）、`GIN_MODE=release`。生产域名需设置 **`CORS_ALLOWED_ORIGINS`**，如 `https://你的域名`（多个用逗号分隔），与前端访问地址一致。
+2. **前端**：修改 `frontend/.env.production` 中的 `VITE_API_BASE_URL` 为你的站点地址（与 Nginx 同域时填 `https://你的域名`），执行 `npm run build`，将 `frontend/dist` 上传到 ECS。
+3. **Nginx**：参考 **`deploy/nginx.conf.example`**，将前端静态资源指向 `dist`，将 `/api`、`/uploads`、`/health` 反代到后端 `http://127.0.0.1:8080`。如需 HTTPS，在 Nginx 配置 SSL 并开放 443。
+4. **MySQL**：在 ECS 或 RDS 执行 `backend/databaseinit/init.sql` 建库建表；安全组放行 3306（仅内网时可不对外开放）。
 
 ---
 

@@ -64,6 +64,13 @@ SERVER_PORT=8080
 GIN_MODE=debug
 ```
 
+**生产部署（如阿里云 ECS）** 建议增加/修改：
+
+- `GIN_MODE=release`
+- `JWT_SECRET` 改为强随机密钥
+- `CORS_ALLOWED_ORIGINS`：前端访问地址，如 `https://你的域名`，多个用逗号分隔
+- `DB_HOST`：使用 RDS 时填 RDS 内网地址
+
 ## 运行
 
 ```bash

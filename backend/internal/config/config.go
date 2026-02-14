@@ -9,11 +9,17 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	JWT      JWTConfig
+	CORS     CORSConfig
 }
 
 type ServerConfig struct {
 	Port int
 	Mode string
+}
+
+// CORSConfig 生产环境 CORS 允许的 Origin，逗号分隔多个，如 https://your-domain.com,https://www.your-domain.com
+type CORSConfig struct {
+	AllowedOrigins string
 }
 
 type DatabaseConfig struct {
@@ -45,6 +51,9 @@ func Load() *Config {
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 			Expiry: getEnvAsInt("JWT_EXPIRY", 24),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", ""),
 		},
 	}
 }

@@ -56,7 +56,7 @@ func (s *Server) setupRouter() {
 	router.Use(gin.Recovery())
 
 	// 中间件
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(s.cfg))
 	router.Use(middleware.Logger())
 
 	// 健康检查
