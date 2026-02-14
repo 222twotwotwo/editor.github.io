@@ -58,6 +58,7 @@ CREATE TABLE `documents` (
 -- ------------------------------------------------------------
 -- 文档点赞表（社区：用户可对同一文档多次点赞，无上限）
 -- ------------------------------------------------------------
+
 DROP TABLE IF EXISTS `document_likes`;
 CREATE TABLE `document_likes` (
   `id` int NOT NULL AUTO_INCREMENT,

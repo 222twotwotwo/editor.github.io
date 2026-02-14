@@ -1,18 +1,18 @@
 # 阿里云 ECS 部署示例：Nginx 同域反代前端 + 后端 API
-# 使用前请替换：your-domain.com、/path/to/frontend/dist、后端 127.0.0.1:8080 按实际
+# 公网 IP 8.134.183.201：使用前请将 root 改为本机前端 dist 实际路径
 
 server {
     listen 80;
-    server_name your-domain.com;   # 改为你的域名或 ECS 公网 IP
+    server_name 8.134.183.201;
 
-    # 前端静态资源（Vite 构建产物）
+    # 前端静态资源（Vite 构建产物），请改为实际路径如 /var/www/alone/frontend/dist
     root /path/to/frontend/dist;
     index index.html;
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # 后端 API 与上传资源反代
+    # 后端 API 与上传资源反代（同机部署时后端监听 127.0.0.1:8080）
     location /api/ {
         proxy_pass http://127.0.0.1:8080/api/;
         proxy_http_version 1.1;
