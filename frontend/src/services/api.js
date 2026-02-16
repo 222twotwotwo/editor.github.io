@@ -28,13 +28,16 @@ api.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
       switch (status) {
-        case 401:
+        case 401: {
+          const hadToken = !!localStorage.getItem('token')
           localStorage.removeItem('token')
           localStorage.removeItem('user')
-          if (window.location.pathname !== '/login') {
+          // 仅当用户曾登录（有 token）却收到 401 时跳转登录页；游客模式不跳转，可继续浏览
+          if (hadToken && window.location.pathname !== '/login') {
             window.location.href = '/login'
           }
           break
+        }
         case 403:
           console.error('权限不足')
           break
