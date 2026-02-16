@@ -71,23 +71,42 @@ let lastPlainText = ''
 
 function getPlainText() {
   const editor = editorRef.value
-  if (!editor || !editor.querySelectorAll) return ''
+  if (!editor || !editor.childNodes) return ''
   let text = ''
-  const walker = document.createTreeWalker(
-    editor,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode: (node) => {
-        if (node.parentElement?.classList?.contains('ai-suggestion')) {
-          return NodeFilter.FILTER_REJECT
-        }
-        return NodeFilter.FILTER_ACCEPT
+  let isOnFreshLine = true
+
+  function parseChildNodes(nodes) {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      // 排除 AI 续写建议区域
+      if (node.nodeType === Node.ELEMENT_NODE && node.closest?.('.ai-suggestion')) {
+        continue
+      }
+
+      if (node.nodeName === 'BR') {
+        text += '\n'
+        isOnFreshLine = true
+        continue
+      }
+      // contenteditable 中 div/p 等块元素表示换行，需在非新行时补 \n
+      if ((node.nodeName === 'DIV' || node.nodeName === 'P') && !isOnFreshLine) {
+        text += '\n'
+      }
+      if (node.nodeName === 'DIV' || node.nodeName === 'P') {
+        isOnFreshLine = false
+      }
+
+      if (node.nodeType === Node.TEXT_NODE && node.textContent) {
+        text += node.textContent
+        isOnFreshLine = false
+      }
+      if (node.childNodes?.length) {
+        parseChildNodes(node.childNodes)
       }
     }
-  )
-  while (walker.nextNode()) {
-    text += walker.currentNode.nodeValue
   }
+
+  parseChildNodes(editor.childNodes)
   return text
 }
 
