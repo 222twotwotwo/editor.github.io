@@ -93,7 +93,9 @@ git --version //验证
   - 执行：
 mkdir -p /root/workspace/markdown/editor.github.io/backend/uploads
 ls -la /root/workspace/markdown/editor.github.io/backend/uploads
-
+  - export GOOS=linux
+  - export GOARCH=amd64
+  - go build -o server ./cmd/server
   - 后端在backend目录下执行 go build -o markdown_editor  // 编译后端程序,生成server可执行程序  
 
 
