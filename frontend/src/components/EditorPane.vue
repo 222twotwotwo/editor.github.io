@@ -10,6 +10,7 @@
         id="editor"
         :value="modelValue"
         @input="emit('update:modelValue', $event.target.value)"
+        @keydown="onTextareaKeyDown"
         @scroll="syncPreviewToEditor"
         placeholder="在此输入 Markdown..."
         spellcheck="false"
@@ -160,6 +161,133 @@ function triggerUserAction() {
 
 function isCursorMoveKey(key) {
   return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(key)
+}
+
+// 自动配对：$ * " ' -> 成对且光标在中间；{ [ ( -> 补全右括号且光标在中间
+const PAIR_MAP = { '(': ')', '[': ']', '{': '}', '$': '$', '*': '*', '"': '"', "'": "'" }
+// 输入这些字符时，若光标右侧已是该字符则跳过，避免 }} ]] )) '' ""
+const SKIP_IF_NEXT = [')', ']', '}', '"', "'", '$', '*']
+
+function getPairInsert(key) {
+  const close = PAIR_MAP[key]
+  return close != null ? { open: key, close } : null
+}
+
+function onTextareaKeyDown(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  const ta = editorRef.value
+  if (!ta) return
+  const start = ta.selectionStart
+  const end = ta.selectionEnd
+  const text = props.modelValue || ''
+
+  // 若按下的是右括号/引号且光标右侧已是该字符，则只移动光标不输入，避免重复
+  if (start === end && SKIP_IF_NEXT.includes(e.key) && text[start] === e.key) {
+    e.preventDefault()
+    ta.setSelectionRange(start + 1, start + 1)
+    return
+  }
+
+  const pair = getPairInsert(e.key)
+  if (!pair) return
+  const insert = pair.open + pair.close
+  e.preventDefault()
+  const before = text.slice(0, start)
+  const after = text.slice(end)
+  const next = before + insert + after
+  emit('update:modelValue', next)
+  nextTick(() => {
+    const pos = start + 1
+    ta.setSelectionRange(pos, pos)
+  })
+}
+
+// contenteditable：获取光标后一个字符（用于“已补全则跳过”）
+function getCharAfterCaret(editor) {
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return ''
+  const range = sel.getRangeAt(0)
+  const node = range.startContainer
+  const offset = range.startOffset
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (offset < node.textContent.length) return node.textContent[offset]
+    const next = getNextTextNode(node)
+    return next ? next.textContent[0] : ''
+  }
+  if (node.nodeType === Node.ELEMENT_NODE && offset < node.childNodes.length) {
+    const first = getFirstTextNode(node.childNodes[offset])
+    return first ? first.textContent[0] : ''
+  }
+  return ''
+}
+
+function getNextTextNode(afterNode) {
+  let n = afterNode.nextSibling
+  while (n) {
+    if (n.nodeType === Node.ELEMENT_NODE && n.closest?.('.ai-suggestion')) {
+      n = n.nextSibling
+      continue
+    }
+    if (n.nodeType === Node.TEXT_NODE && n.textContent.length) return n
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      const first = getFirstTextNode(n)
+      if (first) return first
+    }
+    n = n.nextSibling
+  }
+  return null
+}
+
+function getFirstTextNode(el) {
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const c = el.childNodes[i]
+    if (c.nodeType === Node.TEXT_NODE && c.textContent.length) return c
+    if (c.nodeType === Node.ELEMENT_NODE && !c.closest?.('.ai-suggestion')) {
+      const t = getFirstTextNode(c)
+      if (t) return t
+    }
+  }
+  return null
+}
+
+// contenteditable：光标向右移动一个字符
+function moveCaretForward(editor) {
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return
+  const range = sel.getRangeAt(0).cloneRange()
+  const node = range.startContainer
+  const offset = range.startOffset
+  if (node.nodeType === Node.TEXT_NODE && offset < node.textContent.length) {
+    range.setStart(node, offset + 1)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return
+  }
+  const next = getNextTextNode(node)
+  if (next) {
+    range.setStart(next, 1)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+}
+
+function insertPairInContentEditable(open, close) {
+  const editor = editorRef.value
+  if (!editor || !document.execCommand) return
+  document.execCommand('insertText', false, open + close)
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return
+  const range = sel.getRangeAt(0)
+  const node = range.startContainer
+  const offset = range.startOffset
+  if (node.nodeType === Node.TEXT_NODE && offset > 0) {
+    range.setStart(node, offset - 1)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
 }
 
 function acceptSuggestion() {
@@ -472,6 +600,26 @@ function onAiKeyDown(e) {
   }
   if (isCursorMoveKey(e.key) && hasSuggestion) {
     cancelSuggestion(true)
+  }
+  // 若按下右括号/引号且光标右侧已是该字符，则只移动光标不输入，避免 }} ]] )) '' ""
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && SKIP_IF_NEXT.includes(e.key)) {
+    const editor = editorRef.value
+    if (editor && getCharAfterCaret(editor) === e.key) {
+      e.preventDefault()
+      moveCaretForward(editor)
+      return
+    }
+  }
+  // 自动配对：$ * { [ ( -> 成对且光标在中间
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    const pair = getPairInsert(e.key)
+    if (pair) {
+      e.preventDefault()
+      insertPairInContentEditable(pair.open, pair.close)
+      triggerUserAction()
+      lastPlainText = getPlainText()
+      emit('update:modelValue', lastPlainText)
+    }
   }
 }
 

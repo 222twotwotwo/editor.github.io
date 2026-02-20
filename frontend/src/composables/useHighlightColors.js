@@ -65,56 +65,43 @@ export function useHighlightColors() {
     applyColorSettings()
   }
 
+  // highlight.js 完整类名映射：每个语义项对应其可能出现的所有 hljs 类（保证自定义颜色完全覆盖）
+  const hljsClassMap = {
+    keyword: ['.hljs-keyword', '.hljs-meta .hljs-keyword'],
+    variable: ['.hljs-variable', '.hljs-variable.language_', '.hljs-variable.constant_', '.hljs-params', '.hljs-attr', '.hljs-property', '.hljs-template-variable'],
+    string: ['.hljs-string', '.hljs-subst'],
+    number: ['.hljs-number', '.hljs-literal'],
+    comment: ['.hljs-comment', '.hljs-doctag'],
+    function: ['.hljs-function', '.hljs-title.function_', '.hljs-title.function_.invoke__', '.hljs-title', '.hljs-name'],
+    class: ['.hljs-class', '.hljs-title.class_', '.hljs-title.class_.inherited__', '.hljs-type', '.hljs-selector-class'],
+    meta: ['.hljs-meta', '.hljs-meta.prompt_', '.hljs-section'],
+    built_in: ['.hljs-built_in'],
+    punctuation: ['.hljs-punctuation'],
+    operator: ['.hljs-operator', '.hljs-symbol']
+  }
+
   const applyColorSettings = () => {
     const userColors = getUserColors()
-    const theme = document.documentElement.getAttribute('data-theme') || 'dark'
 
-    // 移除已存在的自定义样式
     const existingStyle = document.getElementById('customHighlightStyles')
-    if (existingStyle) {
-      existingStyle.remove()
-    }
+    if (existingStyle) existingStyle.remove()
 
-    // 创建新的样式元素
     const style = document.createElement('style')
     style.id = 'customHighlightStyles'
 
+    const scopes = ['#preview', '.markdown-body']
     let css = ''
-    syntaxElements.forEach(element => {
-      const color = userColors[theme]?.[element.id] || defaultColors[theme][element.id]
 
-      // 为函数名生成多个可能的CSS选择器
-      if (element.id === 'function') {
-        css += `[data-theme="${theme}"] .hljs-function { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-title.function_ { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-title { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-name { color: ${color} !important; }\n`
-      }
-      // 为标点符号生成多个可能的CSS选择器
-      else if (element.id === 'punctuation') {
-        css += `[data-theme="${theme}"] .hljs-punctuation { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-operator { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-symbol { color: ${color} !important; }\n`
-      }
-      // 为变量名生成多个可能的CSS选择器
-      else if (element.id === 'variable') {
-        css += `[data-theme="${theme}"] .hljs-variable { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-variable.language_ { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-params { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-attr { color: ${color} !important; }\n`
-      }
-      // 为类名生成多个可能的CSS选择器
-      else if (element.id === 'class') {
-        css += `[data-theme="${theme}"] .hljs-class { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-title.class_ { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-type { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-built_in { color: ${color} !important; }\n`
-        css += `[data-theme="${theme}"] .hljs-selector-class { color: ${color} !important; }\n`
-      }
-      // 为其他元素生成CSS选择器
-      else {
-        css += `[data-theme="${theme}"] .hljs-${element.id} { color: ${color} !important; }\n`
-      }
+    // 同时为 light / dark 两种主题生成样式，避免切换主题后自定义颜色失效
+    ;['light', 'dark'].forEach(theme => {
+      syntaxElements.forEach(element => {
+        const color = userColors[theme]?.[element.id] ?? defaultColors[theme][element.id]
+        const selectors = hljsClassMap[element.id] || [`.hljs-${element.id}`]
+        selectors.forEach(sel => {
+          const fullSelectors = scopes.map(s => `[data-theme="${theme}"] ${s} ${sel.trim()}`).join(', ')
+          css += `${fullSelectors} { color: ${color} !important; }\n`
+        })
+      })
     })
 
     style.textContent = css
