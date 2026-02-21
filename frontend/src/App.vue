@@ -2,6 +2,7 @@
   <div>
     <router-view />
     <DesktopPet />
+    <Toast />
   </div>
 </template>
 
@@ -9,6 +10,7 @@
 import { useAuth } from '@/composables/useAuth'
 import { onMounted } from 'vue'
 import DesktopPet from './components/DesktopPet.vue'
+import Toast from './components/Toast.vue'
 
 // 初始化时检查认证状态
 const { fetchProfile } = useAuth()

@@ -4,12 +4,13 @@ import { useAuth } from '@/composables/useAuth'
 // 懒加载组件
 const LoginView = () => import('@/views/LoginView.vue')
 const EditorView = () => import('@/views/EditorView.vue')
+const WindowedEditorView = () => import('@/views/WindowedEditorView.vue')
 const CommunityView = () => import('@/views/CommunityView.vue')
 
 const routes = [
   {
     path: '/',
-    redirect: '/editor'
+    redirect: '/windowed'
   },
   {
     path: '/login',
@@ -23,13 +24,18 @@ const routes = [
     component: EditorView
   },
   {
+    path: '/windowed',
+    name: 'WindowedEditor',
+    component: WindowedEditorView
+  },
+  {
     path: '/community',
     name: 'Community',
     component: CommunityView
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/editor'
+    redirect: '/windowed'
   }
 ]
 

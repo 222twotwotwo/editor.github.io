@@ -8,6 +8,55 @@
       <canvas ref="chartCanvas" height="140"></canvas>
     </section>
 
+    <section class="panel appearance-panel">
+      <h3>📝 编辑器外观</h3>
+      <div class="setting-group">
+        <label>字号: {{ appearanceSettings.fontSize }}px</label>
+        <input
+          type="range"
+          min="12"
+          max="32"
+          :value="appearanceSettings.fontSize"
+          @input="updateAppearance('fontSize', Number($event.target.value))"
+        >
+      </div>
+      <div class="setting-group">
+        <label>行高: {{ appearanceSettings.lineHeight.toFixed(1) }}</label>
+        <input
+          type="range"
+          min="1.2"
+          max="3"
+          step="0.1"
+          :value="appearanceSettings.lineHeight"
+          @input="updateAppearance('lineHeight', Number($event.target.value))"
+        >
+      </div>
+      <div class="setting-group">
+        <label>字重: {{ appearanceSettings.fontWeight }}</label>
+        <input
+          type="range"
+          min="300"
+          max="700"
+          step="100"
+          :value="appearanceSettings.fontWeight"
+          @input="updateAppearance('fontWeight', Number($event.target.value))"
+        >
+      </div>
+      <div class="setting-group">
+        <label>内边距: {{ appearanceSettings.padding }}px</label>
+        <input
+          type="range"
+          min="8"
+          max="64"
+          :value="appearanceSettings.padding"
+          @input="updateAppearance('padding', Number($event.target.value))"
+        >
+      </div>
+      <button type="button" class="reset-appearance-btn" @click="resetAppearance">
+        重置为默认
+      </button>
+    </section>
+
     <section class="panel highlight-panel">
       <h3>🎨 代码高亮颜色</h3>
       <div class="color-list">
@@ -39,11 +88,41 @@ import { useDocument } from '../composables/useDocument'
 import { useHighlightColors } from '../composables/useHighlightColors'
 import { useTheme } from '../composables/useTheme'
 
-defineProps({ collapsed: Boolean })
+const props = defineProps({
+  collapsed: Boolean,
+  activeWindowAppearance: {
+    type: Object,
+    default: () => ({})
+  }
+})
 
 const emit = defineEmits([
-  'reset-colors'
+  'reset-colors',
+  'update-appearance',
+  'reset-appearance'
 ])
+
+const DEFAULT_APPEARANCE = {
+  fontSize: 16,
+  lineHeight: 1.8,
+  fontWeight: 400,
+  fontFamily: 'system-ui, -apple-system, sans-serif',
+  letterSpacing: 0,
+  padding: 24
+}
+
+const appearanceSettings = computed(() => ({
+  ...DEFAULT_APPEARANCE,
+  ...props.activeWindowAppearance
+}))
+
+const updateAppearance = (key, value) => {
+  emit('update-appearance', key, value)
+}
+
+const resetAppearance = () => {
+  emit('reset-appearance')
+}
 
 const { theme } = useTheme()
 const {
@@ -141,6 +220,63 @@ function updateChart() {
 </script>
 
 <style scoped>
+.appearance-panel .setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.appearance-panel .setting-group label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.appearance-panel .setting-group input[type="range"] {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.1);
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+[data-theme="dark"] .appearance-panel .setting-group input[type="range"] {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.appearance-panel .setting-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.appearance-panel .setting-group input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.reset-appearance-btn {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-appearance-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
 .highlight-panel .color-list {
   display: flex;
   flex-direction: column;
