@@ -1,5 +1,5 @@
 <template>
-  <div :data-theme="theme" class="windowed-editor-container">
+  <div :data-theme="theme" class="windowed-editor-container" @keydown="handleKeyDown" tabindex="0">
     <TopBar
       :sound-enabled="soundEnabled"
       :theme="theme"
@@ -324,7 +324,7 @@ const handleDesktopContextMenu = (e) => {
     type: 'desktop',
     windowId: null,
     items: [
-      { icon: '📝', label: '新建编辑器', action: 'new-editor' },
+      { icon: '📝', label: '新建编辑器', shortcut: 'Alt+N', action: 'new-editor' },
       { icon: '📂', label: '导入文档', action: 'import-document' },
       { divider: true },
       { icon: '🔄', label: '刷新文档列表', action: 'refresh-documents' },
@@ -402,6 +402,34 @@ const handleContextMenuSelect = (item) => {
     case 'close':
       if (contextMenu.value.windowId) closeWindow(contextMenu.value.windowId)
       break
+  }
+}
+
+const handleKeyDown = (e) => {
+  if (e.altKey) {
+    switch (e.key.toLowerCase()) {
+      case 'n':
+        e.preventDefault()
+        createNewEditor()
+        break
+      case 'w':
+        e.preventDefault()
+        if (activeWindowId.value) {
+          closeWindow(activeWindowId.value)
+        }
+        break
+      case 'tab':
+        e.preventDefault()
+        const visibleWindows = windows.value.filter(w => !w.isMinimized)
+        if (visibleWindows.length > 1) {
+          const currentIndex = visibleWindows.findIndex(w => w.id === activeWindowId.value)
+          const nextIndex = e.shiftKey 
+            ? (currentIndex - 1 + visibleWindows.length) % visibleWindows.length
+            : (currentIndex + 1) % visibleWindows.length
+          setActiveWindow(visibleWindows[nextIndex].id)
+        }
+        break
+    }
   }
 }
 
