@@ -234,6 +234,6 @@ sudo nginx -t && sudo systemctl reload nginx
 
 
 ```
-
+以后每次执行npm run build 后，都需要执行
 sudo cp -r /root/workspace/markdown/editor.github.io/frontend/dist/. /var/www/markdown-editor/
 

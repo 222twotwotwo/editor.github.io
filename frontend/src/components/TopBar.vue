@@ -29,13 +29,12 @@
     </div>
     
     <div class="actions">
-      <!-- 模式切换按钮 -->
-      <button @click="toggleMode" :title="isWindowedMode ? '切换到专注模式' : '切换到桌面模式'">
-        {{ isWindowedMode ? '🎯 专注' : '🪟 桌面' }}
-      </button>
+      <!-- 桌面模式下显示返回编辑器，编辑器模式下显示进入桌面 -->
+      <button v-if="isWindowedMode" @click="goToEditor" title="返回编辑器">🎯 专注</button>
+      <button v-else @click="goToWindowed" title="桌面模式">🪟 桌面</button>
       
       <!-- 社区导航按钮 -->
-      <button @click="goToCommunity" title="创作社区">💬</button>
+      <button @click="goToCommunity" title="创作社区">💬 社区</button>
       
       <!-- 登录/登出按钮 -->
       <button @click="handleUserAction" :title="isAuthenticated ? '退出登录' : '去登录'">
@@ -91,12 +90,12 @@ const { toggleLeftSidebar: sidebarToggleLeft, toggleRightSidebar } = useSidebar(
 
 const isWindowedMode = computed(() => route.path === '/windowed')
 
-const toggleMode = () => {
-  if (isWindowedMode.value) {
-    router.push('/editor')
-  } else {
-    router.push('/windowed')
-  }
+const goToEditor = () => {
+  router.push('/editor')
+}
+
+const goToWindowed = () => {
+  router.push('/windowed')
 }
 
 const handleToggleLeft = () => {

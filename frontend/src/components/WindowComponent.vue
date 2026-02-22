@@ -2,7 +2,7 @@
   <div
     v-if="!win.isMinimized"
     class="window"
-    :class="{ active: win.isActive, maximized: win.isMaximized, unsaved: isUnsaved }"
+    :class="{ active: win.isActive, maximized: win.isMaximized }"
     :style="windowStyle"
     @mousedown="activateWindow"
     @contextmenu.prevent="handleContextMenu"
@@ -27,13 +27,8 @@
         v-else
         class="title"
         @dblclick.stop="startEditTitle"
-      >
-        <span v-if="isUnsaved" class="unsaved-indicator">• </span>
-        {{ win.title }}
-        <span v-if="isUnsaved" class="unsaved-star">*</span>
-      </span>
+      >{{ win.title }}</span>
       <div class="controls">
-        <span v-if="isUnsaved" class="unsaved-dot" title="未保存"></span>
         <button class="btn min" @mousedown.stop @click="minimize">−</button>
         <button class="btn max" @mousedown.stop @click="toggleMaximize">{{ win.isMaximized ? '❒' : '□' }}</button>
         <button class="btn save" @mousedown.stop @click="saveDocument" title="保存到文档">💾</button>
@@ -70,10 +65,6 @@ const emit = defineEmits(['activate', 'close', 'maximize', 'minimize', 'move', '
 const isEditingTitle = ref(false)
 const localTitle = ref('')
 const titleInput = ref(null)
-
-const isUnsaved = computed(() => {
-  return props.win.content !== props.win.savedContent
-})
 
 const windowStyle = computed(() => {
   if (props.win.isMaximized) {
@@ -223,16 +214,18 @@ onUnmounted(() => {
 <style scoped>
 .window {
   position: absolute;
-  background: white;
-  border: 2px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  background: rgba(255, 255, 255, var(--panel-opacity, 0.85));
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
   display: flex;
   flex-direction: column;
   min-width: 400px;
   min-height: 300px;
   overflow: hidden;
-  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .window-enter-active,
@@ -251,87 +244,56 @@ onUnmounted(() => {
 }
 
 [data-theme="dark"] .window {
-  background: #2a2a2a;
-  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(42, 42, 42, var(--panel-opacity, 0.85));
+  border-color: #444;
 }
 
 .window.active {
-  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-  border-color: #3b82f6;
-}
-
-[data-theme="dark"] .window.active {
-  border-color: #3b82f6;
-}
-
-.window.unsaved {
-  border-color: #f59e0b;
-}
-
-.window.unsaved.active {
-  border-color: #f59e0b;
-  box-shadow: 0 12px 40px rgba(245, 158, 11, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(74, 154, 239, 0.3);
 }
 
 .window.maximized {
   border-radius: 0;
   border: none;
-  box-shadow: none;
 }
 
 .window-header {
-  height: 40px;
-  background: linear-gradient(180deg, #fafafa, #f0f0f0);
-  border-bottom: 1px solid rgba(0,0,0,0.08);
+  height: 36px;
+  background: rgba(245, 245, 245, 0.75);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 12px;
   cursor: move;
   user-select: none;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 [data-theme="dark"] .window-header {
-  background: linear-gradient(180deg, #3a3a3a, #2a2a2a);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(40, 40, 40, 0.75);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .window.active .window-header {
-  background: linear-gradient(180deg, #60a5fa, #3b82f6);
+  background: rgba(74, 154, 239, 0.85);
+  border-bottom-color: rgba(74, 154, 239, 0.4);
 }
 
 [data-theme="dark"] .window.active .window-header {
-  background: linear-gradient(180deg, #58a6ff, #2563eb);
+  background: rgba(58, 134, 239, 0.85);
+  border-bottom-color: rgba(58, 134, 239, 0.4);
 }
 
 .window-header .title {
   flex: 1;
   font-size: 14px;
-  color: #374151;
+  color: #333;
   cursor: text;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .window.active .window-header .title {
   color: white;
-}
-
-.unsaved-indicator {
-  color: #f59e0b;
-  font-weight: bold;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.unsaved-star {
-  color: #f59e0b;
-  font-weight: bold;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 .title-input {
@@ -344,7 +306,6 @@ onUnmounted(() => {
   padding: 0;
   margin: 0;
   width: 100%;
-  font-weight: 500;
 }
 
 .window.active .title-input {
@@ -353,16 +314,7 @@ onUnmounted(() => {
 
 .controls {
   display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.unsaved-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #f59e0b;
-  animation: pulse 1.5s ease-in-out infinite;
+  gap: 6px;
 }
 
 .btn {
@@ -376,20 +328,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.15s, opacity 0.15s;
 }
 
-.btn:hover { 
-  opacity: 0.85;
-  transform: scale(1.05);
-}
-.btn:active {
-  transform: scale(0.95);
-}
+.btn:hover { opacity: 0.8; }
 .btn.min { background: #ffbd44; }
 .btn.max { background: #00ca4e; }
-.btn.save { background: #3498db; font-size: 13px; }
-.btn.switch-to-original { background: #9b59b6; font-size: 15px; }
+.btn.save { background: #3498db; font-size: 14px; }
+.btn.switch-to-original { background: #9b59b6; font-size: 16px; }
 .btn.close { background: #ff5f57; }
 
 .content {

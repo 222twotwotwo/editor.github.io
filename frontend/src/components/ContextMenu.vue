@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   visible: Boolean,
@@ -75,87 +75,63 @@ onUnmounted(() => {
 
 .context-menu {
   position: fixed;
-  min-width: 220px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 12px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.15);
-  padding: 8px;
+  min-width: 200px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  padding: 6px;
   z-index: 10000;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(20px);
-  animation: menuFadeIn 0.15s ease-out;
+  border: 1px solid var(--border);
 }
 
 [data-theme="dark"] .context-menu {
-  background: rgba(42, 42, 42, 0.95);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-@keyframes menuFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+  background: #2a2a2a;
+  border-color: #444;
 }
 
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 8px;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: all 0.15s ease;
-  font-size: 14px;
-  line-height: 1.4;
+  transition: background 0.15s;
+  font-size: 13px;
 }
 
 .context-menu-item:hover:not(.disabled):not(.divider) {
-  background: rgba(59, 130, 246, 0.1);
-  transform: translateX(2px);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 [data-theme="dark"] .context-menu-item:hover:not(.disabled):not(.divider) {
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .context-menu-item.disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
 .context-menu-item.divider {
   height: 1px;
   background: var(--border);
-  margin: 6px 4px;
+  margin: 4px 0;
   padding: 0;
 }
 
 .item-icon {
-  width: 22px;
+  width: 18px;
   text-align: center;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .item-label {
   flex: 1;
-  font-weight: 500;
 }
 
 .item-shortcut {
-  font-size: 12px;
-  opacity: 0.5;
-  font-family: 'Consolas', 'Monaco', monospace;
-  padding: 2px 8px;
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-}
-
-[data-theme="dark"] .item-shortcut {
-  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  opacity: 0.6;
 }
 </style>

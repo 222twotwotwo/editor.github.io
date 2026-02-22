@@ -1,5 +1,5 @@
 
 # 依赖目录（根目录与前端）
-node_modules/
-dist/
+backend/server/
+frontend/dist
 frontend/node_modules/

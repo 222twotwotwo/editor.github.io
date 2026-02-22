@@ -4,6 +4,9 @@ import { ref, onMounted } from 'vue'
 const leftSidebarCollapsed = ref(true)
 const rightSidebarCollapsed = ref(true)
 
+// 桌面模式（WindowedEditorView）文档侧边栏状态，供桌宠等全局组件访问
+const desktopSidebarCollapsed = ref(false)
+
 const setLeftSidebar = (collapsed) => {
   leftSidebarCollapsed.value = collapsed
   localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0')
@@ -20,6 +23,18 @@ const toggleLeftSidebar = () => {
 
 const toggleRightSidebar = () => {
   setRightSidebar(!rightSidebarCollapsed.value)
+}
+
+const setDesktopSidebar = (collapsed) => {
+  desktopSidebarCollapsed.value = collapsed
+}
+
+const openDesktopSidebar = () => {
+  desktopSidebarCollapsed.value = false
+}
+
+const toggleDesktopSidebar = () => {
+  desktopSidebarCollapsed.value = !desktopSidebarCollapsed.value
 }
 
 function initFromStorage() {
@@ -42,8 +57,12 @@ export function useSidebar() {
   return {
     leftSidebarCollapsed,
     rightSidebarCollapsed,
+    desktopSidebarCollapsed,
     setLeftSidebar,
     setRightSidebar,
+    setDesktopSidebar,
+    openDesktopSidebar,
+    toggleDesktopSidebar,
     toggleLeftSidebar,
     toggleRightSidebar
   }
