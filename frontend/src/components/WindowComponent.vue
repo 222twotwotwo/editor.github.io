@@ -214,8 +214,8 @@ onUnmounted(() => {
 <style scoped>
 .window {
   position: absolute;
-  background: white;
-  border: 1px solid #ccc;
+  background: rgba(255, 255, 255, var(--panel-opacity, 0.85));
+  border: 1px solid var(--border, #ddd);
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.2);
   display: flex;
@@ -224,6 +224,8 @@ onUnmounted(() => {
   min-height: 300px;
   overflow: hidden;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .window-enter-active,
@@ -242,12 +244,12 @@ onUnmounted(() => {
 }
 
 [data-theme="dark"] .window {
-  background: #2a2a2a;
+  background: rgba(42, 42, 42, var(--panel-opacity, 0.85));
   border-color: #444;
 }
 
 .window.active {
-  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(74, 154, 239, 0.3);
 }
 
 .window.maximized {
@@ -257,26 +259,30 @@ onUnmounted(() => {
 
 .window-header {
   height: 36px;
-  background: linear-gradient(180deg, #f5f5f5, #e8e8e8);
-  border-bottom: 1px solid #ddd;
+  background: rgba(245, 245, 245, 0.75);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   display: flex;
   align-items: center;
   padding: 0 12px;
   cursor: move;
   user-select: none;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 [data-theme="dark"] .window-header {
-  background: linear-gradient(180deg, #3a3a3a, #2a2a2a);
-  border-color: #444;
+  background: rgba(40, 40, 40, 0.75);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .window.active .window-header {
-  background: linear-gradient(180deg, #6abaff, #4a9aef);
+  background: rgba(74, 154, 239, 0.85);
+  border-bottom-color: rgba(74, 154, 239, 0.4);
 }
 
 [data-theme="dark"] .window.active .window-header {
-  background: linear-gradient(180deg, #58a6ff, #3a86ef);
+  background: rgba(58, 134, 239, 0.85);
+  border-bottom-color: rgba(58, 134, 239, 0.4);
 }
 
 .window-header .title {
