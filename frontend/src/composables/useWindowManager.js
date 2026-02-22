@@ -2,14 +2,21 @@ import { ref, computed, watch } from 'vue'
 
 const STORAGE_KEY = 'windowManagerState'
 const ICON_STORAGE_KEY = 'desktopIconPosition'
+const GROUPS_STORAGE_KEY = 'windowGroups'
 
 let idCounter = 1
 let zIndexCounter = 100
+let groupIdCounter = 1
+
+const DEFAULT_GROUPS = [
+  { id: 'default', name: '默认组', color: '#3b82f6' }
+]
 
 export function useWindowManager() {
   const windows = ref([])
   const activeWindowId = ref(null)
   const iconPosition = ref({ x: 20, y: 20 })
+  const windowGroups = ref([...DEFAULT_GROUPS])
 
   const windowsList = computed(() => {
     return windows.value.slice()
@@ -19,6 +26,7 @@ export function useWindowManager() {
     const state = {
       idCounter,
       zIndexCounter,
+      groupIdCounter,
       windows: windows.value.map(w => ({
         id: w.id,
         title: w.title,
@@ -32,9 +40,11 @@ export function useWindowManager() {
         isActive: w.isActive,
         content: w.content || '',
         previewContent: w.previewContent || '',
-        documentId: w.documentId || null
+        documentId: w.documentId || null,
+        groupId: w.groupId || 'default'
       })),
-      activeWindowId: activeWindowId.value
+      activeWindowId: activeWindowId.value,
+      groups: windowGroups.value
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   }
@@ -50,7 +60,12 @@ export function useWindowManager() {
         const state = JSON.parse(saved)
         idCounter = state.idCounter || 1
         zIndexCounter = state.zIndexCounter || 100
-        windows.value = state.windows || []
+        groupIdCounter = state.groupIdCounter || 1
+        windows.value = (state.windows || []).map(w => ({
+          ...w,
+          groupId: w.groupId || 'default'
+        }))
+        windowGroups.value = state.groups || [...DEFAULT_GROUPS]
         activeWindowId.value = state.activeWindowId || null
         return true
       } catch (e) {
@@ -183,15 +198,76 @@ export function useWindowManager() {
     return windows.value.find(w => w.id === id)
   }
 
+  const createGroup = (name, color = '#3b82f6') => {
+    const id = `group-${groupIdCounter++}`
+    const newGroup = { id, name, color }
+    windowGroups.value.push(newGroup)
+    return id
+  }
+
+  const deleteGroup = (groupId) => {
+    if (groupId === 'default') return
+    const index = windowGroups.value.findIndex(g => g.id === groupId)
+    if (index !== -1) {
+      windows.value.forEach(w => {
+        if (w.groupId === groupId) {
+          w.groupId = 'default'
+        }
+      })
+      windowGroups.value.splice(index, 1)
+    }
+  }
+
+  const updateGroup = (groupId, updates) => {
+    const group = windowGroups.value.find(g => g.id === groupId)
+    if (group) {
+      Object.assign(group, updates)
+    }
+  }
+
+  const moveWindowToGroup = (windowId, groupId) => {
+    const win = windows.value.find(w => w.id === windowId)
+    const group = windowGroups.value.find(g => g.id === groupId)
+    if (win && group) {
+      win.groupId = groupId
+    }
+  }
+
+  const getGroupById = (groupId) => {
+    return windowGroups.value.find(g => g.id === groupId)
+  }
+
+  const groupedWindows = computed(() => {
+    const groups = {}
+    windowGroups.value.forEach(group => {
+      groups[group.id] = {
+        ...group,
+        windows: []
+      }
+    })
+    
+    windows.value.forEach(win => {
+      const groupId = win.groupId || 'default'
+      if (groups[groupId]) {
+        groups[groupId].windows.push(win)
+      }
+    })
+    
+    return Object.values(groups).filter(g => g.windows.length > 0 || g.id === 'default')
+  })
+
   watch(windows, saveState, { deep: true })
   watch(activeWindowId, saveState)
   watch(iconPosition, saveIconPosition, { deep: true })
+  watch(windowGroups, saveState, { deep: true })
 
   return {
     windows,
     activeWindowId,
     iconPosition,
+    windowGroups,
     windowsList,
+    groupedWindows,
     createWindow,
     closeWindow,
     setActiveWindow,
@@ -204,6 +280,11 @@ export function useWindowManager() {
     getWindowById,
     saveState,
     restoreState,
-    restoreIconPosition
+    restoreIconPosition,
+    createGroup,
+    deleteGroup,
+    updateGroup,
+    moveWindowToGroup,
+    getGroupById
   }
 }

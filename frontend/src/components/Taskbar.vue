@@ -8,18 +8,32 @@
     
     <div class="taskbar-items">
       <div
-        v-for="win in windows"
-        :key="win.id"
-        class="taskbar-item"
-        :class="{ active: win.isActive, minimized: win.isMinimized, unsaved: win.content !== win.savedContent }"
-        @click="handleItemClick(win)"
-        @contextmenu.prevent="handleItemContextMenu($event, win)"
+        v-for="(group, groupIndex) in displayGroups"
+        :key="group.id || groupIndex"
+        class="taskbar-group"
       >
-        <span class="item-icon">📝</span>
-        <span class="item-title">
-          <span v-if="win.content !== win.savedContent" class="unsaved-dot">•</span>
-          {{ win.title }}
-        </span>
+        <div
+          v-if="displayGroups.length > 1"
+          class="group-divider"
+          :style="{ borderColor: group.color }"
+        ></div>
+        <div
+          v-for="win in group.windows"
+          :key="win.id"
+          class="taskbar-item"
+          :class="{ active: win.isActive, minimized: win.isMinimized, unsaved: win.content !== win.savedContent }"
+          :style="getItemStyle(group.color)"
+          @click="handleItemClick(win)"
+          @contextmenu.prevent="handleItemContextMenu($event, win)"
+          @mouseenter="showPreview(win, $event)"
+          @mouseleave="hidePreview"
+        >
+          <span class="item-icon">📝</span>
+          <span class="item-title">
+            <span v-if="win.content !== win.savedContent" class="unsaved-dot">•</span>
+            {{ win.title }}
+          </span>
+        </div>
       </div>
     </div>
     
@@ -29,6 +43,21 @@
         <span class="tray-item" title="网络">🌐</span>
         <span class="tray-item" title="设置">⚙️</span>
         <span class="clock" :title="currentTimeFull">{{ currentTime }}</span>
+      </div>
+    </div>
+
+    <!-- 窗口预览 -->
+    <div
+      v-if="previewVisible && previewWindow"
+      class="window-preview"
+      :style="previewStyle"
+    >
+      <div class="preview-header">
+        <span class="preview-title">{{ previewWindow.title }}</span>
+        <span v-if="previewWindow.content !== previewWindow.savedContent" class="preview-unsaved">• 未保存</span>
+      </div>
+      <div class="preview-content">
+        <div class="preview-content-inner">{{ previewContent }}</div>
       </div>
     </div>
   </div>
@@ -41,6 +70,10 @@ defineProps({
   windows: {
     type: Array,
     default: () => []
+  },
+  groupedWindows: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -48,7 +81,11 @@ defineEmits(['activate-window', 'show-start-menu', 'item-context-menu'])
 
 const currentTime = ref('')
 const currentTimeFull = ref('')
+const previewVisible = ref(false)
+const previewWindow = ref(null)
+const previewPosition = ref({ x: 0, y: 0 })
 let timer = null
+let previewTimer = null
 
 const updateTime = () => {
   const now = new Date()
@@ -61,7 +98,40 @@ const updateTime = () => {
   currentTimeFull.value = `${now.getFullYear()}-${month}-${day} ${hours}:${minutes}:${String(now.getSeconds()).padStart(2, '0')}`
 }
 
+const displayGroups = computed(() => {
+  if (props.groupedWindows && props.groupedWindows.length > 0) {
+    return props.groupedWindows
+  }
+  
+  const groups = [{ id: 'default', name: '默认组', color: '#3b82f6', windows: [] }]
+  
+  props.windows.forEach(win => {
+    groups[0].windows.push(win)
+  })
+  
+  return groups.filter(g => g.windows.length > 0)
+})
+
+const previewContent = computed(() => {
+  if (!previewWindow.value) return ''
+  const content = previewWindow.value.content || ''
+  return content.substring(0, 200) + (content.length > 200 ? '...' : '')
+})
+
+const previewStyle = computed(() => ({
+  left: `${previewPosition.value.x}px`,
+  bottom: '64px'
+}))
+
+const getItemStyle = (color) => {
+  if (!color) return {}
+  return {
+    borderLeftColor: color
+  }
+}
+
 const handleItemClick = (win) => {
+  hidePreview()
   if (win.isMinimized) {
     emit('activate-window', win.id)
   } else if (win.isActive) {
@@ -72,7 +142,24 @@ const handleItemClick = (win) => {
 }
 
 const handleItemContextMenu = (e, win) => {
+  hidePreview()
   emit('item-context-menu', e, win)
+}
+
+const showPreview = (win, e) => {
+  if (previewTimer) clearTimeout(previewTimer)
+  previewTimer = setTimeout(() => {
+    previewWindow.value = win
+    previewPosition.value = {
+      x: e.target.getBoundingClientRect().left
+    }
+    previewVisible.value = true
+  }, 200)
+}
+
+const hidePreview = () => {
+  if (previewTimer) clearTimeout(previewTimer)
+  previewVisible.value = false
 }
 
 onMounted(() => {
@@ -81,9 +168,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (timer) {
-    clearInterval(timer)
-  }
+  if (timer) clearInterval(timer)
+  if (previewTimer) clearTimeout(previewTimer)
 })
 </script>
 
@@ -272,5 +358,97 @@ onUnmounted(() => {
 
 [data-theme="dark"] .clock:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.taskbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-divider {
+  width: 2px;
+  height: 30px;
+  border-left: 2px solid;
+  opacity: 0.3;
+  margin: 0 4px;
+}
+
+.window-preview {
+  position: fixed;
+  width: 280px;
+  max-height: 200px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  z-index: 9998;
+  overflow: hidden;
+  animation: previewFadeIn 0.15s ease;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] .window-preview {
+  background: rgba(31, 41, 55, 0.95);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+@keyframes previewFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .preview-header {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+[data-theme="dark"] .preview-title {
+  color: #f9fafb;
+}
+
+.preview-unsaved {
+  font-size: 12px;
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.preview-content {
+  padding: 14px;
+  max-height: 140px;
+  overflow: hidden;
+}
+
+.preview-content-inner {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+[data-theme="dark"] .preview-content-inner {
+  color: #9ca3af;
 }
 </style>
