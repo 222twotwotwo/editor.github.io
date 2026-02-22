@@ -270,6 +270,12 @@ body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  outline: none;
+  transition: box-shadow 0.2s ease;
+}
+
+#editor:focus {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5), 0 0 8px 2px rgba(255, 255, 255, 0.2);
 }
 
 [data-theme="dark"] #editor {

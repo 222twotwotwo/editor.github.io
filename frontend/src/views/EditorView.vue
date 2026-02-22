@@ -145,7 +145,15 @@ const handleDeleteFile = (doc) => {
 }
 
 onMounted(() => {
-  if (currentContent.value) renderPreview()
+  const savedContent = localStorage.getItem('windowedEditorContent')
+  const savedTitle = localStorage.getItem('windowedEditorTitle')
+  if (savedContent) {
+    setContent(savedTitle || '未命名文档', savedContent, savedTitle || '未命名文档')
+    localStorage.removeItem('windowedEditorContent')
+    localStorage.removeItem('windowedEditorTitle')
+  } else if (currentContent.value) {
+    renderPreview()
+  }
 })
 </script>
 

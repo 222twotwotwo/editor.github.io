@@ -44,9 +44,15 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { useDesktopPet } from '../composables/useDesktopPet'
 import { useAudio } from '../composables/useAudio'
 import { useAiContinuationSettings } from '../composables/useAiContinuationSettings'
+import { useSidebar } from '../composables/useSidebar'
+
+// 路由与侧边栏
+const route = useRoute()
+const { toggleDesktopSidebar } = useSidebar()
 
 // 导入组合式函数
 const {
@@ -105,6 +111,10 @@ const handleMouseDown = (e) => {
   } else {
     // 上半区：抖动交互
     startTopHalfInteraction(e, petContainer.value, playPetAudio)
+    // 若当前在桌面页，切换左侧文档栏开关状态
+    if (route.path === '/windowed') {
+      toggleDesktopSidebar()
+    }
   }
 }
 
@@ -122,6 +132,10 @@ const handleTouchStart = (e) => {
     handleResizeTouchStart(e)
   } else {
     handlePetTouchStart(e, petContainer.value, isBottom, playPetAudio)
+    // 上半区触摸：若当前在桌面页，切换左侧文档栏开关状态
+    if (!isBottom && route.path === '/windowed') {
+      toggleDesktopSidebar()
+    }
   }
 }
 
