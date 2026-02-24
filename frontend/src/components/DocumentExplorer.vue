@@ -8,8 +8,12 @@
       'sidebar-mode': sidebarMode,
       'sidebar-left': sidebarMode && win.sidebarSide === 'left',
       'sidebar-right': sidebarMode && win.sidebarSide === 'right',
+<<<<<<< HEAD
       collapsed: sidebarMode && sidebarCollapsed,
       dragging: isDragging
+=======
+      collapsed: sidebarMode && sidebarCollapsed
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
     }"
     :style="windowStyle"
     @mousedown="handleWindowMouseDown"
@@ -56,7 +60,10 @@
     <div 
       v-if="sidebarMode"
       class="sidebar-header"
+<<<<<<< HEAD
       @mousedown.stop="handleSidebarHeaderMouseDown"
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
     >
       <div class="sidebar-title">
         <span>📁 {{ win.title }}</span>
@@ -84,7 +91,11 @@
           </div>
           <div
             v-else
+<<<<<<< HEAD
             v-for="doc in sortedDocuments"
+=======
+            v-for="doc in documents"
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
             :key="doc.id"
             class="document-item"
             @click="openDocumentToWindow(doc)"
@@ -185,7 +196,10 @@ const emit = defineEmits([
 
 const { 
   documents, 
+<<<<<<< HEAD
   sortedDocuments,
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
   loading, 
   fetchDocuments,
   getDocument 
@@ -196,14 +210,20 @@ const editingTitle = ref('')
 const titleInputRef = ref(null)
 const isDragging = ref(false)
 const isResizing = ref(false)
+<<<<<<< HEAD
 const undockedDuringDrag = ref(false)
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 const dragStart = ref({ x: 0, y: 0 })
 const resizeStart = ref({ x: 0, y: 0, width: 0, height: 0, left: 0, top: 0 })
 const resizeDirection = ref('')
 let dragMoveHandler = null
 let dragUpHandler = null
+<<<<<<< HEAD
 let sidebarDragMoveHandler = null
 let sidebarDragUpHandler = null
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 let resizeMoveHandler = null
 let resizeUpHandler = null
 
@@ -266,6 +286,7 @@ const handleWindowMouseDown = () => {
   emit('activate', props.win.id)
 }
 
+<<<<<<< HEAD
 const UNDOCK_THRESHOLD = 30
 
 const handleSidebarHeaderMouseDown = (e) => {
@@ -312,6 +333,8 @@ const handleSidebarHeaderMouseDown = (e) => {
   document.addEventListener('mouseup', sidebarDragUpHandler)
 }
 
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 const handleHeaderMouseDown = (e) => {
   if (props.win.isMaximized) return
   
@@ -328,6 +351,7 @@ const handleHeaderMouseDown = (e) => {
     let newY = e.clientY - dragStart.value.y
     
     const screenWidth = window.innerWidth
+<<<<<<< HEAD
     const DOCK_THRESHOLD = 10
     const UNDOCK_THRESHOLD = 30
     
@@ -349,6 +373,15 @@ const handleHeaderMouseDown = (e) => {
       return
     }
     if (newX + props.win.width >= screenWidth - DOCK_THRESHOLD) {
+=======
+    const screenHeight = window.innerHeight
+    
+    if (newX <= 10 && !props.sidebarMode) {
+      emit('dock-sidebar', 'left')
+      return
+    }
+    if (newX + props.win.width >= screenWidth - 10 && !props.sidebarMode) {
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
       emit('dock-sidebar', 'right')
       return
     }
@@ -439,12 +472,27 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+<<<<<<< HEAD
   if (dragMoveHandler) document.removeEventListener('mousemove', dragMoveHandler)
   if (dragUpHandler) document.removeEventListener('mouseup', dragUpHandler)
   if (sidebarDragMoveHandler) document.removeEventListener('mousemove', sidebarDragMoveHandler)
   if (sidebarDragUpHandler) document.removeEventListener('mouseup', sidebarDragUpHandler)
   if (resizeMoveHandler) document.removeEventListener('mousemove', resizeMoveHandler)
   if (resizeUpHandler) document.removeEventListener('mouseup', resizeUpHandler)
+=======
+  if (dragMoveHandler) {
+    document.removeEventListener('mousemove', dragMoveHandler)
+  }
+  if (dragUpHandler) {
+    document.removeEventListener('mouseup', dragUpHandler)
+  }
+  if (resizeMoveHandler) {
+    document.removeEventListener('mousemove', resizeMoveHandler)
+  }
+  if (resizeUpHandler) {
+    document.removeEventListener('mouseup', resizeUpHandler)
+  }
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 })
 </script>
 
@@ -461,10 +509,13 @@ onUnmounted(() => {
   transition: box-shadow 0.2s, left 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), right 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+<<<<<<< HEAD
 .window:not(.sidebar-mode).dragging {
   transition: box-shadow 0.2s;
 }
 
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 .window.sidebar-mode {
   position: fixed;
   top: 52px;
@@ -489,7 +540,11 @@ onUnmounted(() => {
 .window.sidebar-mode.sidebar-right {
   right: 0;
   left: auto;
+<<<<<<< HEAD
   box-shadow: 2px 0 20px rgba(0, 0, 0, 0.2);
+=======
+  box-shadow: -2px 0 20px rgba(0, 0, 0, 0.2);
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
   transform: translateX(0);
 }
 
@@ -566,7 +621,10 @@ onUnmounted(() => {
   justify-content: space-between;
   user-select: none;
   flex-shrink: 0;
+<<<<<<< HEAD
   cursor: move;
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 }
 
 .sidebar-title {

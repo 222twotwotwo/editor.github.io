@@ -106,8 +106,11 @@ const {
 } = useDocument()
 
 const currentDocumentId = ref(null)
+<<<<<<< HEAD
 /** 从桌面某窗口进入编辑页时记录的源窗口 id，用于返回桌面时写回；在编辑页内切换文档后清除 */
 const sourceWindowIdFromDesktop = ref(null)
+=======
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
 const alertModalVisible = ref(false)
 const alertModalTitle = ref('提示')
 const alertModalMessage = ref('')
@@ -166,8 +169,12 @@ const handleOpenFile = async (doc) => {
 
 const handleSaveFile = async () => {
   const title = (fileNameInput.value || '').trim()
+<<<<<<< HEAD
   const content = currentContent.value || ''
   if (currentDocumentId.value && !title) {
+=======
+  if (!title) {
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
     showAlert('请输入文档标题')
     return
   }
@@ -182,6 +189,7 @@ const handleSaveFile = async () => {
     const res = await uploadDocument({ title, content })
     if (res.success && res.data && res.data.id) {
       currentDocumentId.value = res.data.id
+<<<<<<< HEAD
       const savedTitle = (res.data.filename || res.data.title || title || '新文档').replace(/\.md$/, '')
       currentFile.value = savedTitle
       fileNameInput.value = savedTitle
@@ -205,6 +213,12 @@ const saveCurrentDocumentSilent = async () => {
     if (res.success && res.data?.id) {
       currentDocumentId.value = res.data.id
       currentFile.value = (res.data.filename || title).replace(/\.md$/, '')
+=======
+      currentFile.value = (res.data.filename || title).replace(/\.md$/, '')
+      showAlert('已上传到数据库')
+    } else {
+      showAlert('上传失败')
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
     }
   }
 }
@@ -219,6 +233,7 @@ const handleDeleteFile = (doc) => {
 const goToWindowed = () => {
   localStorage.setItem('windowedEditorContent', currentContent.value || '')
   localStorage.setItem('windowedEditorTitle', fileNameInput.value || currentFile.value || '未命名文档')
+<<<<<<< HEAD
   if (currentDocumentId.value != null) {
     localStorage.setItem('windowedEditorDocumentId', String(currentDocumentId.value))
   }
@@ -226,6 +241,10 @@ const goToWindowed = () => {
     localStorage.setItem('windowedEditorSourceWindowId', String(sourceWindowIdFromDesktop.value))
   } else {
     localStorage.removeItem('windowedEditorSourceWindowId')
+=======
+  if (currentDocumentId.value) {
+    localStorage.setItem('windowedEditorDocId', currentDocumentId.value)
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
   }
   router.push('/windowed')
 }
@@ -233,6 +252,7 @@ const goToWindowed = () => {
 onMounted(() => {
   const savedContent = localStorage.getItem('windowedEditorContent')
   const savedTitle = localStorage.getItem('windowedEditorTitle')
+<<<<<<< HEAD
   const savedSourceId = localStorage.getItem('windowedEditorSourceWindowId')
   if (savedSourceId) {
     const n = Number(savedSourceId)
@@ -245,6 +265,14 @@ onMounted(() => {
       currentDocumentId.value = /^\d+$/.test(savedDocId) ? parseInt(savedDocId, 10) : savedDocId
       touchDocumentAccess(currentDocumentId.value)
       localStorage.removeItem('windowedEditorDocumentId')
+=======
+  const savedDocId = localStorage.getItem('windowedEditorDocId')
+  if (savedContent) {
+    setContent(savedTitle || '未命名文档', savedContent, savedTitle || '未命名文档')
+    if (savedDocId) {
+      currentDocumentId.value = Number(savedDocId)
+      localStorage.removeItem('windowedEditorDocId')
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
     }
     localStorage.removeItem('windowedEditorContent')
     localStorage.removeItem('windowedEditorTitle')

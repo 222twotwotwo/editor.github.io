@@ -131,7 +131,11 @@ let timer = null
 let previewTimer = null
 
 const quickActions = [
+<<<<<<< HEAD
   { id: 'new-editor', icon: '📝', label: '新建MD', action: 'new-editor' },
+=======
+  { id: 'new-editor', icon: '📝', label: '新建编辑器', action: 'new-editor' },
+>>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
   { id: 'my-docs', icon: '📁', label: '我的文档', action: 'my-docs' },
   { id: 'import', icon: '📥', label: '导入文档', action: 'import' },
   { id: 'community', icon: '💬', label: '创作社区', action: 'community' }
