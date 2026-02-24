@@ -5,7 +5,7 @@ const leftSidebarCollapsed = ref(true)
 const rightSidebarCollapsed = ref(true)
 
 // 桌面模式（WindowedEditorView）文档侧边栏状态，供桌宠等全局组件访问
-const desktopSidebarCollapsed = ref(false)
+const desktopSidebarCollapsed = ref(true)
 
 const setLeftSidebar = (collapsed) => {
   leftSidebarCollapsed.value = collapsed

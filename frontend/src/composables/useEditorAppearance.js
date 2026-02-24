@@ -1,8 +1,8 @@
-import { ref, watch } from 'vue'
+import { ref, computed } from 'vue'
 
 const STORAGE_KEY = 'editorAppearance'
 
-const DEFAULT_SETTINGS = {
+const DEFAULT_APPEARANCE = {
   fontSize: 16,
   lineHeight: 1.8,
   fontWeight: 400,
@@ -11,59 +11,48 @@ const DEFAULT_SETTINGS = {
   padding: 24
 }
 
-const settings = ref({ ...DEFAULT_SETTINGS })
-let isInitialized = false
+const globalAppearance = ref({ ...DEFAULT_APPEARANCE })
 
 export function useEditorAppearance() {
-  const loadSettings = () => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      try {
+  const loadAppearance = () => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
         const parsed = JSON.parse(saved)
-        settings.value = { ...DEFAULT_SETTINGS, ...parsed }
-      } catch (e) {
-        console.error('Failed to load editor appearance settings:', e)
+        globalAppearance.value = { ...DEFAULT_APPEARANCE, ...parsed }
       }
+    } catch (e) {
+      console.error('Failed to load appearance:', e)
     }
   }
 
-  const saveSettings = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings.value))
+  const saveAppearance = () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(globalAppearance.value))
   }
 
-  const updateSetting = (key, value) => {
-    if (key in settings.value) {
-      settings.value[key] = value
+  const updateGlobalAppearance = (key, value) => {
+    if (key in globalAppearance.value) {
+      globalAppearance.value[key] = value
+      saveAppearance()
     }
   }
 
-  const resetSettings = () => {
-    settings.value = { ...DEFAULT_SETTINGS }
+  const resetGlobalAppearance = () => {
+    globalAppearance.value = { ...DEFAULT_APPEARANCE }
+    saveAppearance()
   }
 
-  if (!isInitialized) {
-    isInitialized = true
-    loadSettings()
-    watch(settings, () => {
-      saveSettings()
-    }, { deep: true })
+  const getGlobalAppearance = () => {
+    return { ...globalAppearance.value }
   }
 
-  const applyStyle = (element) => {
-    if (!element) return
-    element.style.fontSize = `${settings.value.fontSize}px`
-    element.style.lineHeight = settings.value.lineHeight
-    element.style.fontWeight = settings.value.fontWeight
-    element.style.fontFamily = settings.value.fontFamily
-    element.style.letterSpacing = `${settings.value.letterSpacing}px`
-    element.style.padding = `${settings.value.padding}px`
-  }
+  loadAppearance()
 
   return {
-    settings,
-    loadSettings,
-    updateSetting,
-    resetSettings,
-    applyStyle
+    globalAppearance: computed(() => ({ ...globalAppearance.value })),
+    DEFAULT_APPEARANCE,
+    updateGlobalAppearance,
+    resetGlobalAppearance,
+    getGlobalAppearance
   }
 }

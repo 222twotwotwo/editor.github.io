@@ -11,7 +11,7 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted, computed } from 'vue'
+import { ref, onUnmounted, computed, watch } from 'vue'
 
 const props = defineProps({
   icon: { type: String, default: '📄' },
@@ -29,6 +29,18 @@ let dragStartX = 0
 let dragStartY = 0
 let iconStartX = 0
 let iconStartY = 0
+
+watch(() => props.initialX, (newX) => {
+  if (!isDragging.value) {
+    x.value = newX
+  }
+})
+
+watch(() => props.initialY, (newY) => {
+  if (!isDragging.value) {
+    y.value = newY
+  }
+})
 
 const iconStyle = computed(() => ({
   left: `${x.value}px`,

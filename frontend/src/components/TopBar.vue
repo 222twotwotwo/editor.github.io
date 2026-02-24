@@ -1,7 +1,15 @@
 <template>
   <header class="topbar">
     <button type="button" @click="handleToggleLeft" title="侧边栏">☰</button>
-    <div class="title">📝 仓库链接:https://github.com/222twotwotwo/editor.github.io</div>
+    <div class="title">
+      <template v-if="isWindowedMode && activeWindow">
+        📝 当前: {{ activeWindow.title }}
+        <span v-if="activeWindow.content !== activeWindow.savedContent" class="unsaved-indicator">• 未保存</span>
+      </template>
+      <template v-else>
+        📝 Markdown 编辑器
+      </template>
+    </div>
     
     <!-- 窗口管理器（仅在窗口化模式显示） -->
     <div v-if="isWindowedMode && windows && windows.length > 0" class="window-manager">
@@ -80,7 +88,9 @@ const emit = defineEmits([
   'export-pdf',
   'focus-window',
   'toggle-window-minimize',
-  'close-window'
+  'close-window',
+  'go-to-editor',
+  'go-to-windowed'
 ])
 
 const router = useRouter()
@@ -90,12 +100,17 @@ const { toggleLeftSidebar: sidebarToggleLeft, toggleRightSidebar } = useSidebar(
 
 const isWindowedMode = computed(() => route.path === '/windowed')
 
+const activeWindow = computed(() => {
+  if (!props.windows || !props.activeWindowId) return null
+  return props.windows.find(w => w.id === props.activeWindowId)
+})
+
 const goToEditor = () => {
-  router.push('/editor')
+  emit('go-to-editor')
 }
 
 const goToWindowed = () => {
-  router.push('/windowed')
+  emit('go-to-windowed')
 }
 
 const handleToggleLeft = () => {
@@ -159,6 +174,15 @@ const handleUserAction = () => {
   margin-left: 10px;
   font-weight: bold;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unsaved-indicator {
+  font-size: 12px;
+  color: #f59e0b;
+  font-weight: 500;
 }
 
 .window-manager {

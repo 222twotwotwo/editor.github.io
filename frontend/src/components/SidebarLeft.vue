@@ -10,6 +10,27 @@
 
     <section class="panel appearance-panel">
       <h3>📝 编辑器外观</h3>
+      <div class="appearance-mode-switch">
+        <span class="switch-label">应用范围：</span>
+        <div class="switch-buttons">
+          <button
+            type="button"
+            class="switch-btn"
+            :class="{ active: !useGlobalOnly }"
+            @click="useGlobalOnly = false"
+          >
+            当前窗口
+          </button>
+          <button
+            type="button"
+            class="switch-btn"
+            :class="{ active: useGlobalOnly }"
+            @click="useGlobalOnly = true"
+          >
+            全局
+          </button>
+        </div>
+      </div>
       <div class="setting-group">
         <label>字号: {{ appearanceSettings.fontSize }}px</label>
         <input
@@ -87,6 +108,7 @@ import Chart from 'chart.js/auto'
 import { useDocument } from '../composables/useDocument'
 import { useHighlightColors } from '../composables/useHighlightColors'
 import { useTheme } from '../composables/useTheme'
+import { useEditorAppearance } from '../composables/useEditorAppearance'
 
 const props = defineProps({
   collapsed: Boolean,
@@ -102,26 +124,33 @@ const emit = defineEmits([
   'reset-appearance'
 ])
 
-const DEFAULT_APPEARANCE = {
-  fontSize: 16,
-  lineHeight: 1.8,
-  fontWeight: 400,
-  fontFamily: 'system-ui, -apple-system, sans-serif',
-  letterSpacing: 0,
-  padding: 24
-}
+const { globalAppearance, updateGlobalAppearance, resetGlobalAppearance, DEFAULT_APPEARANCE } = useEditorAppearance()
+const useGlobalOnly = ref(false)
 
-const appearanceSettings = computed(() => ({
-  ...DEFAULT_APPEARANCE,
-  ...props.activeWindowAppearance
-}))
+const appearanceSettings = computed(() => {
+  if (useGlobalOnly.value) {
+    return globalAppearance.value
+  }
+  return {
+    ...DEFAULT_APPEARANCE,
+    ...props.activeWindowAppearance
+  }
+})
 
 const updateAppearance = (key, value) => {
-  emit('update-appearance', key, value)
+  if (useGlobalOnly.value) {
+    updateGlobalAppearance(key, value)
+  } else {
+    emit('update-appearance', key, value)
+  }
 }
 
 const resetAppearance = () => {
-  emit('reset-appearance')
+  if (useGlobalOnly.value) {
+    resetGlobalAppearance()
+  } else {
+    emit('reset-appearance')
+  }
 }
 
 const { theme } = useTheme()
@@ -220,6 +249,48 @@ function updateChart() {
 </script>
 
 <style scoped>
+.appearance-mode-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.appearance-mode-switch .switch-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.appearance-mode-switch .switch-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.appearance-mode-switch .switch-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.appearance-mode-switch .switch-btn:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.appearance-mode-switch .switch-btn.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #3b82f6;
+}
+
 .appearance-panel .setting-group {
   display: flex;
   flex-direction: column;
