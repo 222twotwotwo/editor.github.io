@@ -57,7 +57,11 @@
 import { computed, onUnmounted, ref, nextTick } from 'vue'
 
 const props = defineProps({
-  win: { type: Object, required: true }
+  win: { type: Object, required: true },
+  sidebarState: { 
+    type: Object, 
+    default: () => ({ hasSidebar: false, side: null, width: 0 })
+  }
 })
 
 const emit = defineEmits(['activate', 'close', 'maximize', 'minimize', 'move', 'resize', 'switch-to-original', 'save-document', 'update-title', 'context-menu'])
@@ -68,7 +72,25 @@ const titleInput = ref(null)
 
 const windowStyle = computed(() => {
   if (props.win.isMaximized) {
-    return { left: 0, top: 0, width: '100%', height: '100%', zIndex: props.win.zIndex }
+    let left = 0
+    let width = '100%'
+    
+    if (props.sidebarState.hasSidebar) {
+      if (props.sidebarState.side === 'left') {
+        left = props.sidebarState.width + 'px'
+        width = `calc(100% - ${props.sidebarState.width}px)`
+      } else if (props.sidebarState.side === 'right') {
+        width = `calc(100% - ${props.sidebarState.width}px)`
+      }
+    }
+    
+    return { 
+      left, 
+      top: 0, 
+      width, 
+      height: '100%', 
+      zIndex: props.win.zIndex 
+    }
   }
   return {
     left: `${props.win.x}px`,

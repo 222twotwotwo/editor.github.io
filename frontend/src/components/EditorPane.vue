@@ -60,7 +60,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'sync-without-sound'])
 
 const { aiEnabled, apiKey, aiApiLoading } = useAiContinuationSettings()
 
@@ -764,7 +764,7 @@ watch(aiEnabled, (enabled) => {
   } else {
     abortPendingRequest()
     stopTimerCompletely()
-    emit('update:modelValue', lastPlainText)
+    emit('sync-without-sound', lastPlainText)
   }
 }, { immediate: false })
 

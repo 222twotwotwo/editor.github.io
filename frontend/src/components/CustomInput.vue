@@ -12,6 +12,7 @@
       @input="handleInput"
       @focus="handleFocus"
       @blur="handleBlur"
+      @keyup.enter="$emit('enter')"
     />
     <span v-if="error" class="input-error">{{ error }}</span>
   </div>
@@ -47,7 +48,7 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'focus', 'blur'])
+const emit = defineEmits(['update:modelValue', 'focus', 'blur', 'enter'])
 
 const inputRef = ref(null)
 const isFocused = ref(false)

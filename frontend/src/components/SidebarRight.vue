@@ -9,7 +9,7 @@
         </div>
         <div
           v-else
-          v-for="doc in documents"
+          v-for="doc in sortedDocuments"
           :key="doc.id"
           class="document-item"
           :class="{ active: currentFile === doc.filename.replace(/\.md$/, '') }"
@@ -33,7 +33,10 @@
         <input
           type="checkbox"
           :checked="aiEnabled"
-          @change="toggleAiEnabled"
+          @change="(e) => {
+            toggleAiEnabled()
+            if (e.target.checked) playEditSound()
+          }"
         >
       </label>
       <div v-if="aiEnabled" class="api-key-row">
@@ -50,6 +53,7 @@
 
     <section class="panel">
       <h3>文档操作</h3>
+      <button type="button" class="new-doc-btn" @click="$emit('new-file')">📄 新建MD</button>
       <input
         :value="fileNameInput"
         @input="$emit('update-file-name', $event.target.value)"
@@ -62,19 +66,35 @@
           type="button"
           class="delete-current-btn"
           :disabled="!currentDoc"
-          @click="deleteCurrentDocument"
+          @click="openDeleteConfirm"
         >🗑️ 删除当前文档</button>
       </div>
     </section>
+
+    <!-- 删除确认弹窗（与保存提示同款 CustomModal） -->
+    <CustomModal
+      v-model="deleteModalVisible"
+      title="确认删除"
+      :show-default-footer="true"
+      :show-cancel="true"
+      cancel-text="取消"
+      confirm-text="确定"
+      @confirm="confirmDelete"
+    >
+      <p>{{ deleteConfirmMessage }}</p>
+    </CustomModal>
   </aside>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useDocument } from '../composables/useDocument'
 import { useAiContinuationSettings } from '../composables/useAiContinuationSettings'
+import { useAudio } from '../composables/useAudio'
+import CustomModal from './CustomModal.vue'
 
 const { aiEnabled, apiKey, setApiKey, toggleAiEnabled } = useAiContinuationSettings()
+const { playEditSound } = useAudio()
 
 const props = defineProps({
   collapsed: Boolean,
@@ -87,10 +107,11 @@ const emit = defineEmits([
   'save-file',
   'delete-file',
   'import-file',
-  'update-file-name'
+  'update-file-name',
+  'new-file'
 ])
 
-const { documents, loading, deleteDocument: deleteDoc, fetchDocuments } = useDocument()
+const { documents, sortedDocuments, loading, deleteDocument: deleteDoc, fetchDocuments } = useDocument()
 
 const currentDoc = computed(() => {
   if (!props.currentFile || !documents.value?.length) return null
@@ -113,9 +134,25 @@ const openDocument = (doc) => {
   emit('open-file', doc)
 }
 
-const deleteCurrentDocument = async () => {
+const deleteModalVisible = ref(false)
+const docToDelete = ref(null)
+
+const deleteConfirmMessage = computed(() => {
+  const doc = docToDelete.value
+  return doc ? `确定要删除「${doc.title}」吗？` : ''
+})
+
+const openDeleteConfirm = () => {
   const doc = currentDoc.value
-  if (!doc || !confirm(`确定要删除 "${doc.title}" 吗？`)) return
+  if (!doc) return
+  docToDelete.value = doc
+  deleteModalVisible.value = true
+}
+
+const confirmDelete = async () => {
+  const doc = docToDelete.value
+  docToDelete.value = null
+  if (!doc) return
   const result = await deleteDoc(doc.id)
   if (result.success) {
     await fetchDocuments()
@@ -217,6 +254,23 @@ const deleteCurrentDocument = async () => {
   font-size: 11px;
   color: var(--text);
   opacity: 0.7;
+}
+
+.new-doc-btn {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: var(--primary, #3b82f6);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  transition: opacity 0.2s;
+}
+
+.new-doc-btn:hover {
+  opacity: 0.9;
 }
 
 .button-group {

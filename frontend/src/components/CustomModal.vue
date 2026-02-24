@@ -29,9 +29,9 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 
-defineProps({
+const props = defineProps({
   modelValue: {
     type: Boolean,
     default: false
@@ -72,7 +72,11 @@ defineProps({
 
 const emit = defineEmits(['update:modelValue', 'close', 'confirm', 'cancel'])
 
-const visible = ref(false)
+const visible = ref(props.modelValue)
+
+onMounted(() => {
+  visible.value = props.modelValue
+})
 
 watch(() => props.modelValue, (val) => {
   visible.value = val

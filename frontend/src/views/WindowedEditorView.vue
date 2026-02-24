@@ -1,58 +1,12 @@
 <template>
   <div :data-theme="theme" class="windowed-editor-container">
     <TopBar
-      :sound-enabled="soundEnabled"
       :theme="theme"
-      :on-toggle-left-sidebar="toggleLeftSidebar"
-      :windows="windows"
-      :active-window-id="activeWindowId"
-      @toggle-sound="toggleSound"
       @toggle-theme="toggleTheme"
-      @export-html="handleExportHTML"
-      @export-md="handleExportMD"
-      @export-pdf="handleExportPDF"
-      @focus-window="setActiveWindow"
-      @toggle-window-minimize="toggleMinimize"
-      @close-window="closeWindow"
+      @go-to-editor="handleGoToEditor"
     />
 
     <div class="main-container">
-      <!-- 侧边栏 - 我的文档 -->
-      <aside class="document-sidebar" :class="{ collapsed: desktopSidebarCollapsed }">
-        <div class="sidebar-header">
-          <h3>📂 我的文档</h3>
-          <button class="toggle-btn" @click="toggleDesktopSidebar">
-            {{ desktopSidebarCollapsed ? '▶' : '◀' }}
-          </button>
-        </div>
-        
-        <div class="document-list">
-          <div v-if="loading" class="loading">加载中...</div>
-          <div v-else-if="!documents || documents.length === 0" class="empty-list">
-            暂无文档
-          </div>
-          <div
-            v-else
-            v-for="doc in documents"
-            :key="doc.id"
-            class="document-item"
-            @click="openDocumentToWindow(doc)"
-          >
-            <div class="document-info">
-              <div class="document-title">{{ doc.title }}</div>
-              <div class="document-meta">
-                <span>{{ formatFileSize(doc.file_size) }}</span>
-                <span>{{ formatDate(doc.updated_at) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="sidebar-actions">
-          <button @click="importDocument">📂 导入文档</button>
-          <button @click="refreshDocuments">🔄 刷新</button>
-        </div>
-      </aside>
 
       <!-- 桌面区域 -->
       <div 
@@ -61,42 +15,79 @@
       >
         <DesktopIcon
           icon="📝"
-          label="新建编辑器"
+          label="新建MD"
           :initial-x="iconPosition.x"
           :initial-y="iconPosition.y"
           @click="createNewEditor"
           @move="handleIconMove"
         />
+        <DesktopIcon
+          icon="📂"
+          label="我的文档"
+          :initial-x="docIconPosition.x"
+          :initial-y="docIconPosition.y"
+          @click="toggleDocumentExplorer"
+          @move="handleDocIconMove"
+        />
 
         <div class="windows-container">
           <TransitionGroup name="window-list">
-            <WindowComponent
-              v-for="win in windows"
-              :key="win.id"
-              :win="win"
-              @activate="setActiveWindow"
-              @close="closeWindow"
-              @maximize="toggleMaximize"
-              @minimize="toggleMinimize"
-              @move="updateWindowPosition"
-              @resize="updateWindowSize"
-              @update-title="updateWindowTitle"
-              @save-document="handleSaveWindowDocument"
-              @switch-to-original="() => switchToOriginalView(win.id)"
-              @context-menu="handleWindowContextMenu"
-            >
-              <div class="window-editor-wrapper">
-                <EditorPane
-                  :model-value="getWindowContent(win.id)"
-                  :preview-content="getWindowPreview(win.id)"
-                  @update:model-value="(v) => handleWindowContentChange(win.id, v)"
-                />
-              </div>
-            </WindowComponent>
+            <template v-for="win in windows" :key="win.id">
+              <WindowComponent
+                v-if="!win.isDocumentExplorer"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="handleCloseWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @save-document="handleSaveWindowDocument"
+                @switch-to-original="() => switchToOriginalView(win.id)"
+                @context-menu="handleWindowContextMenu"
+              >
+                <div class="window-editor-wrapper">
+                  <EditorPane
+                    :model-value="getWindowContent(win.id)"
+                    :preview-content="getWindowPreview(win.id)"
+                    @update:model-value="(v) => handleWindowContentChange(win.id, v)"
+                    @sync-without-sound="(v) => handleWindowContentChangeSilent(win.id, v)"
+                  />
+                </div>
+              </WindowComponent>
+              
+              <DocumentExplorer
+                v-else
+                :win="win"
+                :sidebar-mode="!!win.sidebarMode"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @dock-sidebar="handleDockToSidebar"
+                @undock-sidebar="handleUndockFromSidebar"
+                @open-document="openDocumentToWindow"
+                @import-document="importDocument"
+              />
+            </template>
           </TransitionGroup>
         </div>
       </div>
     </div>
+
+    <!-- 任务栏 -->
+    <Taskbar
+      :windows="windows"
+      :grouped-windows="groupedWindows"
+      @activate-window="handleTaskbarActivateWindow"
+      @item-context-menu="handleTaskbarItemContextMenu"
+      @menu-action="handleTaskbarMenuAction"
+    />
 
     <!-- 右键菜单 -->
     <ContextMenu
@@ -106,17 +97,48 @@
       @close="closeContextMenu"
       @select="handleContextMenuSelect"
     />
+
+    <!-- 新建MD弹窗 -->
+    <CustomModal
+      v-model="newEditorModalVisible"
+      title="新建MD"
+      :show-default-footer="true"
+      confirm-text="创建"
+      @confirm="confirmCreateNewEditor"
+    >
+      <CustomInput
+        ref="newEditorInputRef"
+        v-model="newEditorTitle"
+        label="文档名称"
+        placeholder="不填则使用「新文档」"
+        @enter="confirmCreateNewEditor"
+      />
+    </CustomModal>
+
+    <!-- 提示弹窗 -->
+    <CustomModal
+      v-model="alertModalVisible"
+      :title="alertModalTitle"
+      :show-default-footer="true"
+      :show-cancel="false"
+    >
+      <p>{{ alertModalMessage }}</p>
+    </CustomModal>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import TopBar from '../components/TopBar.vue'
 import EditorPane from '../components/EditorPane.vue'
 import WindowComponent from '../components/WindowComponent.vue'
+import DocumentExplorer from '../components/DocumentExplorer.vue'
 import DesktopIcon from '../components/DesktopIcon.vue'
 import ContextMenu from '../components/ContextMenu.vue'
+import Taskbar from '../components/Taskbar.vue'
+import CustomModal from '../components/CustomModal.vue'
+import CustomInput from '../components/CustomInput.vue'
 import { useTheme } from '../composables/useTheme'
 import { useAudio } from '../composables/useAudio'
 import { useSidebar } from '../composables/useSidebar'
@@ -124,15 +146,18 @@ import { useWindowManager } from '../composables/useWindowManager'
 import { useDocument } from '../composables/useDocument'
 import { exportHTML as exportHTMLUtil, exportMD as exportMDUtil, exportPDF as exportPDFUtil } from '../utils/exportUtils'
 import { markdownToHtml } from '../utils/markdownParser'
+import { formatFileSize, formatDate } from '../utils/formatUtils'
 
 const router = useRouter()
 const { theme, toggleTheme } = useTheme()
 const { soundEnabled, toggleSound, playEditSound, playExportSound } = useAudio()
-const { leftSidebarCollapsed, toggleLeftSidebar, desktopSidebarCollapsed, toggleDesktopSidebar } = useSidebar()
+const { leftSidebarCollapsed, rightSidebarCollapsed, toggleLeftSidebar } = useSidebar()
 const {
   windows,
   activeWindowId,
   iconPosition,
+  docIconPosition,
+  groupedWindows,
   createWindow,
   closeWindow,
   setActiveWindow,
@@ -144,7 +169,8 @@ const {
   updateWindowContent,
   getWindowById,
   restoreState,
-  restoreIconPosition
+  restoreIconPosition,
+  restoreDocIconPosition
 } = useWindowManager()
 const { 
   uploadDocument, 
@@ -152,12 +178,14 @@ const {
   getDocument, 
   documents, 
   loading, 
-  fetchDocuments 
+  fetchDocuments,
+  touchDocumentAccess
 } = useDocument()
 
 const windowContents = ref({})
 const windowPreviews = ref({})
 const windowDocumentIds = ref({})
+const windowSavedContent = ref({})
 const contextMenu = ref({
   visible: false,
   position: { x: 0, y: 0 },
@@ -165,9 +193,41 @@ const contextMenu = ref({
   type: null,
   windowId: null
 })
+const newEditorModalVisible = ref(false)
+const newEditorTitle = ref('')
+const newEditorInputRef = ref(null)
+const alertModalVisible = ref(false)
+const alertModalTitle = ref('提示')
+const alertModalMessage = ref('')
+
+watch(newEditorModalVisible, (val) => {
+  if (val) {
+    nextTick(() => {
+      newEditorInputRef.value?.focus()
+    })
+  }
+})
 
 const activeWindow = computed(() => {
   return getWindowById(activeWindowId.value)
+})
+
+watch(activeWindowId, (id) => {
+  if (id == null) return
+  const docId = windowDocumentIds.value[id]
+  if (docId != null) touchDocumentAccess(docId)
+})
+
+const sidebarState = computed(() => {
+  const explorer = windows.value.find(w => w.isDocumentExplorer && w.sidebarMode)
+  if (!explorer) {
+    return { hasSidebar: false, side: null, width: 0 }
+  }
+  return {
+    hasSidebar: true,
+    side: explorer.sidebarSide,
+    width: 320
+  }
 })
 
 const getWindowContent = (id) => {
@@ -178,11 +238,50 @@ const getWindowPreview = (id) => {
   return windowPreviews.value[id] || ''
 }
 
+const showAlert = (message, title = '提示') => {
+  alertModalMessage.value = message
+  alertModalTitle.value = title
+  alertModalVisible.value = true
+}
+
 const createNewEditor = () => {
-  const id = createWindow({ title: '未命名文档', content: '' })
-  windowContents.value[id] = ''
-  windowPreviews.value[id] = ''
-  windowDocumentIds.value[id] = null
+  newEditorTitle.value = ''
+  newEditorModalVisible.value = true
+}
+
+const checkUnsavedChanges = async (winId) => {
+  const win = getWindowById(winId)
+  if (!win || win.isDocumentExplorer) return true
+  
+  const currentContent = windowContents.value[winId] || ''
+  const savedContent = windowSavedContent.value[winId] || ''
+  
+  if (currentContent !== savedContent) {
+    const result = confirm(`"${win.title}" 有未保存的修改，是否保存？\n\n点击确定保存并关闭，点击取消放弃修改并关闭，点击右上角 X 取消操作`)
+    if (result) {
+      await handleSaveWindowDocument(winId)
+    }
+    return true
+  }
+  return true
+}
+
+const doCreateWindow = (title, content = '', documentId = null) => {
+  const id = createWindow({ title, content, documentId })
+  windowContents.value[id] = content
+  windowSavedContent.value[id] = content
+  windowPreviews.value[id] = content ? markdownToHtml(content) : ''
+  windowDocumentIds.value[id] = documentId
+  return id
+}
+
+const confirmCreateNewEditor = async () => {
+  const title = newEditorTitle.value.trim() || '新文档'
+  const id = doCreateWindow(title, '')
+  newEditorModalVisible.value = false
+  newEditorTitle.value = ''
+  setActiveWindow(id)
+  await handleSaveWindowDocument(id)
 }
 
 const handleWindowContentChange = (windowId, content) => {
@@ -192,13 +291,19 @@ const handleWindowContentChange = (windowId, content) => {
   playEditSound()
 }
 
+const handleWindowContentChangeSilent = (windowId, content) => {
+  windowContents.value[windowId] = content
+  windowPreviews.value[windowId] = markdownToHtml(content)
+  updateWindowContent(windowId, content)
+}
+
 const handleSaveWindowDocument = async (windowId) => {
   const win = getWindowById(windowId)
   if (!win) return
 
   const title = (win.title || '').trim()
   if (!title) {
-    alert('请先设置文档标题（双击窗口标题编辑）')
+    showAlert('请先设置文档标题（双击窗口标题编辑）')
     return
   }
 
@@ -209,31 +314,53 @@ const handleSaveWindowDocument = async (windowId) => {
     if (docId) {
       const res = await updateDocument(docId, { title, content })
       if (res.success) {
-        alert('已保存到数据库')
+        windowSavedContent.value[windowId] = content
+        showAlert('已保存到数据库')
       } else {
-        alert('保存失败')
+        showAlert('保存失败')
       }
     } else {
       const res = await uploadDocument({ title, content })
       if (res.success && res.data && res.data.id) {
         windowDocumentIds.value[windowId] = res.data.id
+        windowSavedContent.value[windowId] = content
         const win = getWindowById(windowId)
         if (win) win.documentId = res.data.id
-        alert('已上传到数据库')
+        showAlert('已上传到数据库')
       } else {
-        alert('上传失败')
+        showAlert('上传失败')
       }
     }
   } catch (err) {
-    alert('操作失败')
+    showAlert('操作失败')
+  }
+}
+
+const handleGoToEditor = () => {
+  const win = getWindowById(activeWindowId.value)
+  if (win && !win.isDocumentExplorer) {
+    switchToOriginalView(activeWindowId.value)
+  } else {
+    localStorage.setItem('windowedEditorContent', '')
+    localStorage.setItem('windowedEditorTitle', '未命名文档')
+    localStorage.removeItem('windowedEditorSourceWindowId')
+    localStorage.removeItem('windowedEditorLastSourceWindowId')
+    localStorage.removeItem('windowedEditorDocumentId')
+    router.push('/editor')
   }
 }
 
 const switchToOriginalView = (windowId) => {
   const content = windowContents.value[windowId] || ''
   const title = getWindowById(windowId)?.title || '未命名文档'
+  const docId = windowDocumentIds.value[windowId]
   localStorage.setItem('windowedEditorContent', content)
   localStorage.setItem('windowedEditorTitle', title)
+  localStorage.setItem('windowedEditorSourceWindowId', String(windowId))
+  localStorage.setItem('windowedEditorLastSourceWindowId', String(windowId))
+  if (docId != null) {
+    localStorage.setItem('windowedEditorDocumentId', String(docId))
+  }
   router.push('/editor')
 }
 
@@ -243,7 +370,7 @@ const handleIconMove = (x, y) => {
 
 const handleExportHTML = () => {
   if (!activeWindow.value) {
-    alert('请先选择一个窗口')
+    showAlert('请先选择一个窗口')
     return
   }
   playExportSound()
@@ -252,7 +379,7 @@ const handleExportHTML = () => {
 
 const handleExportMD = () => {
   if (!activeWindow.value) {
-    alert('请先选择一个窗口')
+    showAlert('请先选择一个窗口')
     return
   }
   const win = activeWindow.value
@@ -263,18 +390,6 @@ const handleExportMD = () => {
 const handleExportPDF = () => {
   playExportSound()
   exportPDFUtil()
-}
-
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-const formatDate = (dateString) => {
-  return new Date(dateString).toLocaleDateString('zh-CN')
 }
 
 const openDocumentToWindow = async (doc) => {
@@ -295,13 +410,11 @@ const openDocumentToWindow = async (doc) => {
   const res = await getDocument(doc.id)
   if (res.success && res.data) {
     const d = res.data
-    const id = createWindow({ title: d.title, content: d.content, documentId: d.id })
-    windowContents.value[id] = d.content
-    windowPreviews.value[id] = markdownToHtml(d.content)
-    windowDocumentIds.value[id] = d.id
+    const id = doCreateWindow(d.title, d.content, d.id)
+    touchDocumentAccess(doc.id)
     setActiveWindow(id)
   } else {
-    alert('加载文档失败')
+    showAlert('加载文档失败')
   }
 }
 
@@ -339,7 +452,7 @@ const handleDesktopContextMenu = (e) => {
     type: 'desktop',
     windowId: null,
     items: [
-      { icon: '📝', label: '新建编辑器', action: 'new-editor' },
+      { icon: '📝', label: '新建MD', action: 'new-editor' },
       { icon: '📂', label: '导入文档', action: 'import-document' },
       { divider: true },
       { icon: '🔄', label: '刷新文档列表', action: 'refresh-documents' },
@@ -376,8 +489,91 @@ const closeContextMenu = () => {
   contextMenu.value.visible = false
 }
 
+const handleTaskbarActivateWindow = (id) => {
+  const win = getWindowById(id)
+  if (win?.isMinimized) {
+    toggleMinimize(id)
+  } else {
+    setActiveWindow(id)
+  }
+}
+
+const handleTaskbarItemContextMenu = (e, win) => {
+  contextMenu.value = {
+    visible: true,
+    position: { x: e.clientX, y: e.clientY },
+    windowId: win.id,
+    type: 'taskbar',
+    items: [
+      { icon: '🎯', label: '激活窗口', action: 'activate' },
+      { icon: '🔄', label: '最小化/还原', action: 'toggle-minimize' },
+      { icon: '⛶', label: '最大化/还原', action: 'toggle-maximize' },
+      { divider: true },
+      { icon: '💾', label: '保存文档', action: 'save-document' },
+      { icon: '🎯', label: '专注模式', action: 'switch-to-original' },
+      { divider: true },
+      { icon: '✖️', label: '关闭窗口', action: 'close' }
+    ]
+  }
+}
+
+const handleTaskbarMenuAction = (item) => {
+  switch (item.action) {
+    case 'new-editor':
+      createNewEditor()
+      break
+    case 'my-docs':
+      toggleDocumentExplorer()
+      break
+    case 'import':
+      importDocument()
+      break
+    case 'community':
+      router.push('/community')
+      break
+    case 'minimize-all':
+      windows.value.forEach(w => {
+        if (!w.isMinimized) toggleMinimize(w.id)
+      })
+      break
+    case 'maximize-all':
+      windows.value.forEach(w => {
+        if (!w.isMaximized) toggleMaximize(w.id)
+      })
+      break
+    case 'close-all':
+      if (confirm('确定要关闭所有窗口吗？')) {
+        ;[...windows.value].forEach(w => closeWindow(w.id))
+      }
+      break
+    case 'theme':
+      toggleTheme()
+      break
+    case 'export':
+      if (activeWindow.value) {
+        handleExportMD()
+      } else {
+        showAlert('请先选择一个窗口')
+      }
+      break
+    case 'save':
+      if (activeWindow.value && !activeWindow.value.isDocumentExplorer) {
+        handleSaveWindowDocument(activeWindow.value.id)
+      } else {
+        showAlert('请先选择一个编辑器窗口')
+      }
+      break
+    case 'settings':
+      showAlert('设置功能开发中...')
+      break
+  }
+}
+
 const handleContextMenuSelect = (item) => {
   switch (item.action) {
+    case 'activate':
+      if (contextMenu.value.windowId) setActiveWindow(contextMenu.value.windowId)
+      break
     case 'new-editor':
       createNewEditor()
       break
@@ -420,21 +616,177 @@ const handleContextMenuSelect = (item) => {
   }
 }
 
-onMounted(() => {
-  restoreIconPosition()
-  const hasRestored = restoreState()
+const handleDocIconMove = (x, y) => {
+  docIconPosition.value = { x, y }
+}
+
+const getDocumentExplorerWindow = () => {
+  return windows.value.find(w => w.isDocumentExplorer)
+}
+
+const toggleDocumentExplorer = () => {
+  const existingExplorer = getDocumentExplorerWindow()
+  if (existingExplorer) {
+    if (existingExplorer.isMinimized) {
+      toggleMinimize(existingExplorer.id)
+    }
+    setActiveWindow(existingExplorer.id)
+  } else {
+    createDocumentExplorer()
+  }
+}
+
+const createDocumentExplorer = () => {
+  const id = createWindow({ 
+    title: '我的文档', 
+    content: '', 
+    isDocumentExplorer: true,
+    width: 380,
+    height: 500,
+    x: 100,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const handleDockToSidebar = (side) => {
+  const explorerWin = getDocumentExplorerWindow()
+  if (!explorerWin) return
   
+  explorerWin.sidebarMode = true
+  explorerWin.sidebarSide = side
+  setActiveWindow(explorerWin.id)
+}
+
+const handleUndockFromSidebar = (payload) => {
+  const explorerWin = getDocumentExplorerWindow()
+  if (!explorerWin) return
+  
+  explorerWin.sidebarMode = false
+  explorerWin.sidebarSide = null
+  explorerWin.x = payload?.x ?? 100
+  explorerWin.y = payload?.y ?? 100
+  explorerWin.width = 380
+  explorerWin.height = 500
+  setActiveWindow(explorerWin.id)
+}
+
+const handleCloseWindow = async (windowId) => {
+  const canClose = await checkUnsavedChanges(windowId)
+  if (canClose) {
+    closeWindow(windowId)
+    delete windowContents.value[windowId]
+    delete windowPreviews.value[windowId]
+    delete windowDocumentIds.value[windowId]
+    delete windowSavedContent.value[windowId]
+  }
+}
+
+onMounted(async () => {
+  restoreIconPosition()
+  restoreDocIconPosition()
+  const hasRestored = restoreState()
+  await fetchDocuments()
+
+  // 从编辑区返回时，优先使用 localStorage 中的内容（编辑区写入的内容）
+  const savedContent = localStorage.getItem('windowedEditorContent')
+  const savedTitle = localStorage.getItem('windowedEditorTitle')
+  const savedSourceWindowId = localStorage.getItem('windowedEditorSourceWindowId')
+  const savedDocId = localStorage.getItem('windowedEditorDocumentId')
+  const documentId = savedDocId ? (/^\d+$/.test(savedDocId) ? parseInt(savedDocId, 10) : savedDocId) : null
+
   if (!hasRestored || windows.value.length === 0) {
-    createNewEditor()
+    const content = savedContent || ''
+    const title = (savedTitle || '未命名文档').trim()
+    doCreateWindow(title || '未命名文档', content, documentId)
   } else {
     windows.value.forEach(win => {
       windowContents.value[win.id] = win.content || ''
+      windowSavedContent.value[win.id] = win.content || ''
       windowPreviews.value[win.id] = markdownToHtml(win.content || '')
       windowDocumentIds.value[win.id] = win.documentId || null
     })
+    // 若从编辑区返回且无 sourceWindowId（用户已在编辑页切换了文档），则关闭原来的「空白且未保存」的文档窗口
+    const savedLastSourceWindowId = localStorage.getItem('windowedEditorLastSourceWindowId')
+    if (savedContent !== null && !savedSourceWindowId && savedLastSourceWindowId) {
+      const lastId = Number(savedLastSourceWindowId)
+      const winToClose = getWindowById(lastId)
+      const isBlankUnsaved = winToClose &&
+        !winToClose.isDocumentExplorer &&
+        (winToClose.documentId == null) &&
+        ((winToClose.content || '').trim() === '')
+      if (isBlankUnsaved) {
+        closeWindow(lastId)
+        delete windowContents.value[lastId]
+        delete windowPreviews.value[lastId]
+        delete windowDocumentIds.value[lastId]
+        delete windowSavedContent.value[lastId]
+      }
+      localStorage.removeItem('windowedEditorLastSourceWindowId')
+    }
+    // 若从编辑区返回，用编辑区的内容覆盖对应窗口，并切换至该窗口（仅当有源窗口 id 时覆盖，否则复用同文档窗口或新建窗口避免重复）
+    if (savedContent !== null) {
+      const sourceId = savedSourceWindowId ? Number(savedSourceWindowId) : null
+      let targetWin = sourceId != null && getWindowById(sourceId) && !getWindowById(sourceId).isDocumentExplorer
+        ? getWindowById(sourceId)
+        : null
+      if (!targetWin && documentId != null) {
+        const existingWinId = Object.keys(windowDocumentIds.value).find(
+          winId => windowDocumentIds.value[winId] === documentId
+        )
+        if (existingWinId) {
+          const win = getWindowById(Number(existingWinId))
+          if (win && !win.isDocumentExplorer) targetWin = win
+        }
+      }
+      if (targetWin) {
+        const title = (savedTitle || targetWin.title || '未命名文档').trim()
+        windowContents.value[targetWin.id] = savedContent
+        windowSavedContent.value[targetWin.id] = savedContent
+        windowPreviews.value[targetWin.id] = markdownToHtml(savedContent)
+        windowDocumentIds.value[targetWin.id] = documentId
+        updateWindowContent(targetWin.id, savedContent)
+        updateWindowTitle(targetWin.id, title)
+        setActiveWindow(targetWin.id)
+      } else {
+        doCreateWindow((savedTitle || '未命名文档').trim(), savedContent, documentId)
+      }
+    }
   }
-  
-  fetchDocuments()
+
+  // 关闭在编辑页已删除的文档对应的窗口
+  const existingDocIds = new Set(documents.value.map(d => d.id))
+  const docExists = (docId) => {
+    if (docId == null) return false
+    return existingDocIds.has(docId) || existingDocIds.has(Number(docId)) || existingDocIds.has(String(docId))
+  }
+  const windowsToCloseForDeleted = windows.value.filter(w =>
+    !w.isDocumentExplorer &&
+    w.documentId != null &&
+    !docExists(w.documentId)
+  )
+  windowsToCloseForDeleted.forEach(w => {
+    closeWindow(w.id)
+    delete windowContents.value[w.id]
+    delete windowPreviews.value[w.id]
+    delete windowDocumentIds.value[w.id]
+    delete windowSavedContent.value[w.id]
+  })
+
+  if (savedContent !== null) {
+    localStorage.removeItem('windowedEditorContent')
+    localStorage.removeItem('windowedEditorTitle')
+    localStorage.removeItem('windowedEditorLastSourceWindowId')
+  }
+  if (savedSourceWindowId !== null) {
+    localStorage.removeItem('windowedEditorSourceWindowId')
+  }
+  if (savedDocId !== null) {
+    localStorage.removeItem('windowedEditorDocumentId')
+  }
 })
 </script>
 
@@ -451,131 +803,6 @@ onMounted(() => {
   flex: 1;
   position: relative;
   overflow: hidden;
-}
-
-.document-sidebar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 280px;
-  height: 100%;
-  background: rgba(255, 255, 255, var(--panel-opacity));
-  border-right: 1px solid var(--border);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  transition: transform 0.25s ease, opacity 0.25s ease;
-  overflow: hidden;
-  backdrop-filter: blur(8px);
-  z-index: 100;
-}
-
-[data-theme="dark"] .document-sidebar {
-  background: rgba(42, 42, 42, var(--panel-opacity));
-}
-
-.document-sidebar.collapsed {
-  transform: translateX(-100%);
-  opacity: 0;
-  pointer-events: none;
-}
-
-.sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.sidebar-header h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.toggle-btn {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-
-.toggle-btn:hover {
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.document-list {
-  flex: 1;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow-y: auto;
-  margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.8);
-}
-
-[data-theme="dark"] .document-list {
-  background: rgba(30, 30, 30, 0.8);
-}
-
-.document-item {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.document-item:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-[data-theme="dark"] .document-item:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.document-item:last-child {
-  border-bottom: none;
-}
-
-.document-info {
-  flex: 1;
-  overflow: hidden;
-}
-
-.document-title {
-  font-weight: 500;
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.document-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--text);
-  opacity: 0.7;
-}
-
-.loading,
-.empty-list {
-  padding: 20px;
-  text-align: center;
-  color: var(--text);
-  opacity: 0.7;
-}
-
-.sidebar-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.sidebar-actions button {
-  flex: 1;
-  padding: 8px;
-  font-size: 12px;
 }
 
 .desktop-area {
