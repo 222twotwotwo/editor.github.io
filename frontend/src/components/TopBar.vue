@@ -1,47 +1,10 @@
 <template>
-<<<<<<< HEAD
   <header class="topbar" :class="{ 'topbar-simple': isWindowedMode }">
     <!-- 桌面模式：社区风格简洁顶部栏 -->
     <template v-if="isWindowedMode">
       <div class="logo">
         <span class="logo-icon">🪟</span>
         <span>桌面模式</span>
-=======
-  <header class="topbar">
-    <button type="button" @click="handleToggleLeft" title="侧边栏">☰</button>
-    <div class="title">
-      <template v-if="isWindowedMode && activeWindow">
-        📝 当前: {{ activeWindow.title }}
-        <span v-if="activeWindow.content !== activeWindow.savedContent" class="unsaved-indicator">• 未保存</span>
-      </template>
-      <template v-else>
-        📝 Markdown 编辑器
-      </template>
-    </div>
-    
-    <!-- 窗口管理器（仅在窗口化模式显示） -->
-    <div v-if="isWindowedMode && windows && windows.length > 0" class="window-manager">
-      <div
-        v-for="win in windows"
-        :key="win.id"
-        class="window-tab"
-        :class="{ active: win.id === activeWindowId, minimized: win.isMinimized }"
-        @click="handleWindowTabClick(win)"
-      >
-        <span class="tab-icon">📄</span>
-        <span class="tab-title">{{ win.title }}</span>
-        <button
-          v-if="!win.isMinimized"
-          class="tab-minimize"
-          @click.stop="minimizeWindow(win.id)"
-          title="最小化"
-        >−</button>
-        <button
-          class="tab-close"
-          @click.stop="closeWindow(win.id)"
-          title="关闭"
-        >×</button>
->>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
       </div>
       <div class="nav-btns">
         <button class="btn" @click="goToEditor" title="返回编辑器">
@@ -111,12 +74,6 @@ const emit = defineEmits([
   'export-html',
   'export-md',
   'export-pdf',
-<<<<<<< HEAD
-=======
-  'focus-window',
-  'toggle-window-minimize',
-  'close-window',
->>>>>>> 0035fb0d8057be12ac4008429ba41a152c1c7fa1
   'go-to-editor',
   'go-to-windowed'
 ])
@@ -127,11 +84,6 @@ const { isAuthenticated, logout } = useAuth()
 const { toggleLeftSidebar: sidebarToggleLeft, toggleRightSidebar } = useSidebar()
 
 const isWindowedMode = computed(() => route.path === '/windowed')
-
-const activeWindow = computed(() => {
-  if (!props.windows || !props.activeWindowId) return null
-  return props.windows.find(w => w.id === props.activeWindowId)
-})
 
 const goToEditor = () => {
   emit('go-to-editor')
