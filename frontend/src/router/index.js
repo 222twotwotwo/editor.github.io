@@ -10,7 +10,7 @@ const CommunityView = () => import('@/views/CommunityView.vue')
 const routes = [
   {
     path: '/',
-    redirect: '/windowed'
+    redirect: '/editor'
   },
   {
     path: '/login',
@@ -35,7 +35,7 @@ const routes = [
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/windowed'
+    redirect: '/editor'
   }
 ]
 
