@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 
 export function useAudio() {
-  const soundEnabled = ref(localStorage.getItem('soundEnabled') !== '0')
+  const soundEnabled = ref(localStorage.getItem('soundEnabled') === '1')
   const audioUnlocked = ref(false)
   
   // 添加播放状态跟踪

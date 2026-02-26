@@ -752,7 +752,11 @@ onMounted(async () => {
         updateWindowTitle(targetWin.id, title)
         setActiveWindow(targetWin.id)
       } else {
-        doCreateWindow((savedTitle || '未命名文档').trim(), savedContent, documentId)
+        // 避免多余窗口：仅当有实际内容或 documentId 时才新建窗口（编辑->桌面->社区->编辑->桌面 流程下常为空，不创建）
+        const hasMeaningfulContent = (savedContent || '').trim() !== '' || documentId != null
+        if (hasMeaningfulContent) {
+          doCreateWindow((savedTitle || '未命名文档').trim(), savedContent, documentId)
+        }
       }
     }
   }

@@ -57,7 +57,7 @@ import { useAuth } from '../composables/useAuth'
 import { useSidebar } from '../composables/useSidebar'
 
 const props = defineProps({
-  soundEnabled: { type: Boolean, default: true },
+  soundEnabled: { type: Boolean, default: false },
   theme: {
     type: String,
     default: 'dark'
