@@ -4,8 +4,8 @@ import { ref, onMounted } from 'vue'
 const leftSidebarCollapsed = ref(true)
 const rightSidebarCollapsed = ref(true)
 
-// 窗口模式（WindowedEditorView）文档资源管理器侧栏收起状态
-const docExplorerSidebarCollapsed = ref(true)
+// 桌面模式（WindowedEditorView）文档侧边栏状态，供桌宠等全局组件访问
+const desktopSidebarCollapsed = ref(false)
 
 const setLeftSidebar = (collapsed) => {
   leftSidebarCollapsed.value = collapsed
@@ -25,16 +25,16 @@ const toggleRightSidebar = () => {
   setRightSidebar(!rightSidebarCollapsed.value)
 }
 
-const setDocExplorerSidebar = (collapsed) => {
-  docExplorerSidebarCollapsed.value = collapsed
+const setDesktopSidebar = (collapsed) => {
+  desktopSidebarCollapsed.value = collapsed
 }
 
-const expandDocExplorerSidebar = () => {
-  docExplorerSidebarCollapsed.value = false
+const openDesktopSidebar = () => {
+  desktopSidebarCollapsed.value = false
 }
 
-const toggleDocExplorerSidebar = () => {
-  docExplorerSidebarCollapsed.value = !docExplorerSidebarCollapsed.value
+const toggleDesktopSidebar = () => {
+  desktopSidebarCollapsed.value = !desktopSidebarCollapsed.value
 }
 
 function initFromStorage() {
@@ -57,12 +57,12 @@ export function useSidebar() {
   return {
     leftSidebarCollapsed,
     rightSidebarCollapsed,
-    docExplorerSidebarCollapsed,
+    desktopSidebarCollapsed,
     setLeftSidebar,
     setRightSidebar,
-    setDocExplorerSidebar,
-    expandDocExplorerSidebar,
-    toggleDocExplorerSidebar,
+    setDesktopSidebar,
+    openDesktopSidebar,
+    toggleDesktopSidebar,
     toggleLeftSidebar,
     toggleRightSidebar
   }

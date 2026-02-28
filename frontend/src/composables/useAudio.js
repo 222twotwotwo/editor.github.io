@@ -1,39 +1,46 @@
+
 import { ref, onMounted } from 'vue'
 
-// 全局单例：保证所有使用 useAudio 的组件共享同一套音效开关与解锁状态，
-// 这样 TopBar 的开关会同步到 AI 续写、桌宠等处的音效
-const soundEnabled = ref(localStorage.getItem('soundEnabled') === '1')
-const audioUnlocked = ref(false)
-const editPlaying = ref(false)
-const petPlaying = ref(false)
-let editAudio, exportAudio, petAudio
-let audioInitialized = false
-
-function initAudio() {
-  if (audioInitialized) return
-  audioInitialized = true
-  editAudio = new Audio('/audio/edit.mp3')
-  exportAudio = new Audio('/audio/export.mp3')
-  petAudio = new Audio('/audio/pet.mp3')
-  editAudio.volume = 0.4
-  exportAudio.volume = 0.6
-  petAudio.volume = 0.4
-  editAudio.addEventListener('ended', () => { editPlaying.value = false })
-  petAudio.addEventListener('ended', () => { petPlaying.value = false })
-  document.addEventListener('click', () => {
-    if (!audioUnlocked.value && editAudio) {
-      editAudio.play().then(() => {
-        editAudio.pause()
-        editAudio.currentTime = 0
-        audioUnlocked.value = true
-      }).catch(() => {})
-    }
-  }, { once: true })
-}
-
 export function useAudio() {
+  const soundEnabled = ref(localStorage.getItem('soundEnabled') !== '0')
+  const audioUnlocked = ref(false)
+  
+  // 添加播放状态跟踪
+  const editPlaying = ref(false)
+  const petPlaying = ref(false)
+  
+  // 使用单个Audio实例（和原项目一致）
+  let editAudio, exportAudio, petAudio
+
   onMounted(() => {
-    initAudio()
+    editAudio = new Audio('/audio/edit.mp3')
+    exportAudio = new Audio('/audio/export.mp3')
+    petAudio = new Audio('/audio/pet.mp3')
+    
+    editAudio.volume = 0.4
+    exportAudio.volume = 0.6
+    petAudio.volume = 0.4  // 宠物音效使用较低音量
+    
+    // 监听编辑音效播放结束
+    editAudio.addEventListener('ended', () => {
+      editPlaying.value = false
+    })
+    
+    // 监听宠物音效播放结束
+    petAudio.addEventListener('ended', () => {
+      petPlaying.value = false
+    })
+
+    // 解锁音频
+    document.addEventListener('click', () => {
+      if (!audioUnlocked.value) {
+        editAudio.play().then(() => {
+          editAudio.pause()
+          editAudio.currentTime = 0
+          audioUnlocked.value = true
+        }).catch(() => {})
+      }
+    }, { once: true })
   })
 
   const toggleSound = () => {
@@ -42,7 +49,7 @@ export function useAudio() {
   }
 
   const playEditSound = () => {
-    if (!audioInitialized) initAudio()
+    // 和原项目一致：音频未解锁、音效关闭、正在播放时跳过
     if (!audioUnlocked.value || !soundEnabled.value || editPlaying.value) return
     
     editPlaying.value = true
@@ -58,7 +65,7 @@ export function useAudio() {
   }
 
   const playExportSound = () => {
-    if (!audioInitialized) initAudio()
+    // 和原项目一致：音频未解锁、音效关闭时跳过，不检查播放状态
     if (!audioUnlocked.value || !soundEnabled.value) return
     
     exportAudio.currentTime = 0
@@ -73,7 +80,7 @@ export function useAudio() {
   }
 
   const playPetSound = () => {
-    if (!audioInitialized) initAudio()
+    // 和编辑音效类似：音频未解锁、音效关闭、正在播放时跳过
     if (!audioUnlocked.value || !soundEnabled.value || petPlaying.value) return
     
     petPlaying.value = true
@@ -89,7 +96,7 @@ export function useAudio() {
   }
 
   const playSound = (src) => {
-    if (!audioInitialized) initAudio()
+    // 通用的音频播放函数，支持任意音频文件
     if (!audioUnlocked.value || !soundEnabled.value) return false
     
     try {

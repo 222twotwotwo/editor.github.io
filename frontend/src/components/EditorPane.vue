@@ -1,7 +1,6 @@
 <template>
   <div
     class="editor-container"
-    :style="editorStyle"
     @dragover.prevent="onDragOver"
     @drop.prevent="onDrop"
   >
@@ -9,7 +8,6 @@
       <textarea
         ref="editorRef"
         id="editor"
-        class="editor-textarea"
         :value="modelValue"
         @input="emit('update:modelValue', $event.target.value)"
         @keydown="onTextareaKeyDown"
@@ -35,32 +33,21 @@
         @scroll="syncPreviewToEditor"
       />
     </template>
-    <div ref="previewRef" id="preview" class="editor-preview" v-html="previewContent" @scroll="syncEditorToPreview"></div>
+    <div ref="previewRef" id="preview" v-html="previewContent" @scroll="syncEditorToPreview"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAiContinuationSettings } from '../composables/useAiContinuationSettings'
 import { documentAPI } from '../services/api'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  previewContent: { type: String, default: '' },
-  appearance: {
-    type: Object,
-    default: () => ({
-      fontSize: 16,
-      lineHeight: 1.8,
-      fontWeight: 400,
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      letterSpacing: 0,
-      padding: 24
-    })
-  }
+  previewContent: { type: String, default: '' }
 })
 
-const emit = defineEmits(['update:modelValue', 'sync-without-sound'])
+const emit = defineEmits(['update:modelValue'])
 
 const { aiEnabled, apiKey, aiApiLoading } = useAiContinuationSettings()
 
@@ -764,18 +751,9 @@ watch(aiEnabled, (enabled) => {
   } else {
     abortPendingRequest()
     stopTimerCompletely()
-    emit('sync-without-sound', lastPlainText)
+    emit('update:modelValue', lastPlainText)
   }
 }, { immediate: false })
-
-const editorStyle = computed(() => ({
-  '--editor-font-size': `${props.appearance.fontSize}px`,
-  '--editor-line-height': props.appearance.lineHeight,
-  '--editor-font-weight': props.appearance.fontWeight,
-  '--editor-font-family': props.appearance.fontFamily,
-  '--editor-letter-spacing': `${props.appearance.letterSpacing}px`,
-  '--editor-padding': `${props.appearance.padding}px`
-}))
 
 onMounted(() => {
   if (aiEnabled.value && editorRef.value) {
@@ -796,26 +774,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.editor-textarea {
-  display: block;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  resize: none;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font-family: var(--editor-font-family, system-ui, -apple-system, sans-serif);
-  font-size: var(--editor-font-size, 16px);
-  line-height: var(--editor-line-height, 1.8);
-  font-weight: var(--editor-font-weight, 400);
-  letter-spacing: var(--editor-letter-spacing, 0);
-  padding: var(--editor-padding, 24px);
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
 .editor-contenteditable {
   display: block;
   width: 100%;
@@ -827,12 +785,6 @@ onUnmounted(() => {
   overflow-x: hidden;
   outline: none;
   min-height: 0;
-  font-family: var(--editor-font-family, system-ui, -apple-system, sans-serif);
-  font-size: var(--editor-font-size, 16px);
-  line-height: var(--editor-line-height, 1.8);
-  font-weight: var(--editor-font-weight, 400);
-  letter-spacing: var(--editor-letter-spacing, 0);
-  padding: var(--editor-padding, 24px);
 }
 
 .editor-contenteditable:empty::before {
@@ -847,15 +799,6 @@ onUnmounted(() => {
   margin: 0;
   font-size: inherit;
   line-height: inherit;
-}
-
-.editor-preview {
-  font-family: var(--editor-font-family, system-ui, -apple-system, sans-serif);
-  font-size: var(--editor-font-size, 16px);
-  line-height: var(--editor-line-height, 1.8);
-  font-weight: var(--editor-font-weight, 400);
-  letter-spacing: var(--editor-letter-spacing, 0);
-  padding: var(--editor-padding, 24px);
 }
 
 /* 续写建议：半透明 */

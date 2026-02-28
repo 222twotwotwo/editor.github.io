@@ -1,18 +1,22 @@
 <template>
   <div>
     <router-view />
+    <!-- 保留原有桌宠组件 -->
     <DesktopPet />
-    <Toast />
+    <!-- 新增AnotherDeskPet组件 -->
+    <AnotherDeskPet />
   </div>
 </template>
 
 <script setup>
 import { useAuth } from '@/composables/useAuth'
 import { onMounted } from 'vue'
+// 保留原有组件导入
 import DesktopPet from './components/DesktopPet.vue'
-import Toast from './components/Toast.vue'
+// 新增AnotherDeskPet组件导入
+import AnotherDeskPet from './components/AnotherDeskPet.vue'
 
-// 初始化时检查认证状态
+// 初始化时检查认证状态（原有逻辑保持不变）
 const { fetchProfile } = useAuth()
 
 onMounted(() => {

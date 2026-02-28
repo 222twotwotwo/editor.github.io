@@ -7,9 +7,8 @@
       @contextmenu.prevent="handleOverlayClick"
     >
       <div
-        ref="menuRef"
         class="context-menu"
-        :style="menuStyle"
+        :style="{ left: `${position.x}px`, top: `${position.y}px` }"
       >
         <div
           v-for="(item, index) in items"
@@ -28,7 +27,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   visible: Boolean,
@@ -37,39 +36,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close', 'select'])
-
-const menuRef = ref(null)
-
-const menuStyle = computed(() => {
-  let x = props.position?.x || 0
-  let y = props.position?.y || 0
-  
-  if (menuRef.value) {
-    const menuWidth = menuRef.value.offsetWidth
-    const menuHeight = menuRef.value.offsetHeight
-    const windowWidth = window.innerWidth
-    const windowHeight = window.innerHeight
-    
-    if (x + menuWidth > windowWidth) {
-      x = windowWidth - menuWidth - 8
-    }
-    
-    if (y + menuHeight > windowHeight) {
-      y = windowHeight - menuHeight - 8
-    }
-  }
-  
-  return {
-    left: `${Math.max(4, x)}px`,
-    top: `${Math.max(4, y)}px`
-  }
-})
-
-watch(() => props.visible, (val) => {
-  if (val) {
-    nextTick(() => {})
-  }
-})
 
 const handleItemClick = (item) => {
   if (!item.disabled && !item.divider) {

@@ -1,52 +1,56 @@
 <template>
-  <header class="topbar" :class="{ 'topbar-simple': isWindowedMode }">
-    <!-- 桌面模式：社区风格简洁顶部栏 -->
-    <template v-if="isWindowedMode">
-      <div class="logo">
-        <span class="logo-icon">🪟</span>
-        <span>桌面模式</span>
-      </div>
-      <div class="nav-btns">
-        <button class="btn" @click="goToEditor" title="返回编辑器">
-          <span class="nav-icon">🎯</span>
-          <span>专注</span>
-        </button>
-        <button class="btn" @click="goToCommunity" title="创作社区">
-          <span class="nav-icon">💬</span>
-          <span>社区</span>
-        </button>
+  <header class="topbar">
+    <button type="button" @click="handleToggleLeft" title="侧边栏">☰</button>
+    <div class="title">📝 仓库链接:https://github.com/222twotwotwo/editor.github.io</div>
+    
+    <!-- 窗口管理器（仅在窗口化模式显示） -->
+    <div v-if="isWindowedMode && windows && windows.length > 0" class="window-manager">
+      <div
+        v-for="win in windows"
+        :key="win.id"
+        class="window-tab"
+        :class="{ active: win.id === activeWindowId, minimized: win.isMinimized }"
+        @click="handleWindowTabClick(win)"
+      >
+        <span class="tab-icon">📄</span>
+        <span class="tab-title">{{ win.title }}</span>
         <button
-          class="btn login-btn"
-          @click="handleUserAction"
-          :title="isAuthenticated ? '退出登录' : '去登录'"
-        >
-          <span class="nav-icon">{{ isAuthenticated ? '🚪' : '👤' }}</span>
-          <span>{{ isAuthenticated ? '登出' : '登录' }}</span>
-        </button>
-        <button class="btn theme-btn" @click="$emit('toggle-theme')" :title="theme === 'dark' ? '切换浅色' : '切换深色'">
-          <span class="nav-icon">{{ themeIcon }}</span>
-        </button>
+          v-if="!win.isMinimized"
+          class="tab-minimize"
+          @click.stop="minimizeWindow(win.id)"
+          title="最小化"
+        >−</button>
+        <button
+          class="tab-close"
+          @click.stop="closeWindow(win.id)"
+          title="关闭"
+        >×</button>
       </div>
-    </template>
-
-    <!-- 编辑器模式：完整功能顶部栏 -->
-    <template v-else>
-      <button type="button" @click="handleToggleLeft" title="侧边栏">☰</button>
-      <div class="title">📝 Markdown 编辑器</div>
-      <div class="actions">
-        <button @click="goToWindowed" title="桌面模式">🪟 桌面</button>
-        <button @click="goToCommunity" title="创作社区">💬 社区</button>
-        <button @click="handleUserAction" :title="isAuthenticated ? '退出登录' : '去登录'">
-          {{ isAuthenticated ? '🚪 登出' : '🔑 登录' }}
-        </button>
+    </div>
+    
+    <div class="actions">
+      <!-- 桌面模式下显示返回编辑器，编辑器模式下显示进入桌面 -->
+      <button v-if="isWindowedMode" @click="goToEditor" title="返回编辑器">🎯 专注</button>
+      <button v-else @click="goToWindowed" title="桌面模式">🪟 桌面</button>
+      
+      <!-- 社区导航按钮 -->
+      <button @click="goToCommunity" title="创作社区">💬 社区</button>
+      
+      <!-- 登录/登出按钮 -->
+      <button @click="handleUserAction" :title="isAuthenticated ? '退出登录' : '去登录'">
+        {{ isAuthenticated ? '🚪 登出' : '🔑 登录' }}
+      </button>
+      
+      <!-- 仅在非窗口化模式显示以下按钮 -->
+      <template v-if="!isWindowedMode">
         <button type="button" @click="toggleRightSidebar" title="文件列表">📂</button>
         <button @click="$emit('toggle-sound')">{{ soundIcon }}</button>
         <button @click="$emit('toggle-theme')">{{ themeIcon }}</button>
         <button @click="$emit('export-html')">导出 HTML</button>
         <button @click="$emit('export-md')">导出 MD</button>
         <button @click="$emit('export-pdf')">导出 PDF</button>
-      </div>
-    </template>
+      </template>
+    </div>
   </header>
 </template>
 
@@ -57,7 +61,7 @@ import { useAuth } from '../composables/useAuth'
 import { useSidebar } from '../composables/useSidebar'
 
 const props = defineProps({
-  soundEnabled: { type: Boolean, default: false },
+  soundEnabled: Boolean,
   theme: {
     type: String,
     default: 'dark'
@@ -74,8 +78,9 @@ const emit = defineEmits([
   'export-html',
   'export-md',
   'export-pdf',
-  'go-to-editor',
-  'go-to-windowed'
+  'focus-window',
+  'toggle-window-minimize',
+  'close-window'
 ])
 
 const router = useRouter()
@@ -86,11 +91,11 @@ const { toggleLeftSidebar: sidebarToggleLeft, toggleRightSidebar } = useSidebar(
 const isWindowedMode = computed(() => route.path === '/windowed')
 
 const goToEditor = () => {
-  emit('go-to-editor')
+  router.push('/editor')
 }
 
 const goToWindowed = () => {
-  emit('go-to-windowed')
+  router.push('/windowed')
 }
 
 const handleToggleLeft = () => {
@@ -99,6 +104,22 @@ const handleToggleLeft = () => {
   } else {
     sidebarToggleLeft()
   }
+}
+
+const handleWindowTabClick = (win) => {
+  if (win.isMinimized) {
+    emit('toggle-window-minimize', win.id)
+  } else {
+    emit('focus-window', win.id)
+  }
+}
+
+const minimizeWindow = (id) => {
+  emit('toggle-window-minimize', id)
+}
+
+const closeWindow = (id) => {
+  emit('close-window', id)
 }
 
 const soundIcon = computed(() => props.soundEnabled ? '🔊' : '🔇')
@@ -138,15 +159,6 @@ const handleUserAction = () => {
   margin-left: 10px;
   font-weight: bold;
   white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.unsaved-indicator {
-  font-size: 12px;
-  color: #f59e0b;
-  font-weight: 500;
 }
 
 .window-manager {
@@ -263,68 +275,5 @@ const handleUserAction = () => {
 
 .topbar button:hover {
   transform: translateY(-1px);
-}
-
-/* 桌面模式：适配项目主题的简洁顶部栏 */
-.topbar-simple {
-  justify-content: space-between;
-}
-
-.topbar-simple .logo {
-  font-size: 1.2rem;
-  font-weight: 600;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.topbar-simple .logo-icon {
-  font-size: 1.5rem;
-}
-
-.topbar-simple .nav-btns {
-  display: flex;
-  gap: 10px;
-}
-
-.topbar-simple .btn {
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  background-color: transparent;
-  color: var(--text);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.2s ease;
-  margin-left: 0;
-  outline: none;
-}
-
-.topbar-simple .btn:hover {
-  background-color: var(--border);
-  color: var(--text);
-}
-
-.topbar-simple .login-btn {
-  background-color: var(--text);
-  color: var(--bg);
-  border: 1px solid var(--text);
-}
-
-.topbar-simple .login-btn:hover {
-  opacity: 0.85;
-  color: var(--bg);
-}
-
-.topbar-simple .theme-btn {
-  background-color: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-
-.topbar-simple .theme-btn:hover {
-  background-color: var(--border);
-  color: var(--text);
 }
 </style>

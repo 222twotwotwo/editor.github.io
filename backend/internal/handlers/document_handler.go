@@ -175,7 +175,7 @@ func (h *DocumentHandler) GetDocuments(c *gin.Context) {
 	}
 
 	rows, err := h.db.Query(
-		"SELECT id, user_id, title, filename, file_size, created_at, updated_at FROM documents WHERE user_id = ? ORDER BY created_at DESC",
+		"SELECT id, user_id, title, filename, file_size, created_at, updated_at FROM documents WHERE user_id = ? ORDER BY updated_at DESC",
 		userID,
 	)
 	if err != nil {
@@ -343,7 +343,7 @@ func (h *DocumentHandler) SearchDocuments(c *gin.Context) {
 
 	pattern := "%" + keyword + "%"
 	rows, err := h.db.Query(
-		"SELECT id, user_id, title, filename, file_size, created_at, updated_at FROM documents WHERE user_id = ? AND (title LIKE ? OR filename LIKE ?) ORDER BY created_at DESC",
+		"SELECT id, user_id, title, filename, file_size, created_at, updated_at FROM documents WHERE user_id = ? AND (title LIKE ? OR filename LIKE ?) ORDER BY updated_at DESC",
 		userID, pattern, pattern,
 	)
 	if err != nil {

@@ -20,7 +20,7 @@ export function useFileSystem(markdownParser) {
   const newFile = () => {
     currentFile.value = null
     currentContent.value = ''
-    fileNameInput.value = ''
+    fileNameInput.value = '新文档'
     renderPreview()
   }
 
