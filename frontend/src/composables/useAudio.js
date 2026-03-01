@@ -41,6 +41,14 @@ export function useAudio() {
     localStorage.setItem('soundEnabled', soundEnabled.value ? '1' : '0')
   }
 
+  // volume: 0~1，对应用户感知的整体音量，各音效按原比例缩放
+  const setVolume = (volume) => {
+    if (!audioInitialized) initAudio()
+    if (editAudio) editAudio.volume = volume * 0.4
+    if (exportAudio) exportAudio.volume = volume * 0.6
+    if (petAudio) petAudio.volume = volume * 0.4
+  }
+
   const playEditSound = () => {
     if (!audioInitialized) initAudio()
     if (!audioUnlocked.value || !soundEnabled.value || editPlaying.value) return
@@ -113,6 +121,7 @@ export function useAudio() {
   return {
     soundEnabled,
     toggleSound,
+    setVolume,
     playEditSound,
     playExportSound,
     playPetSound,
