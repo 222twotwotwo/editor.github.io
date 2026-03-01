@@ -83,6 +83,9 @@ func (s *Server) setupRouter() {
 	// 处理器
 	authHandler := handlers.NewAuthHandler(s.db, jwt)
 	postHandler := handlers.NewPostHandler(s.db)
+	documentHandler := handlers.NewDocumentHandler(s.db)
+	tagHandler := handlers.NewTagHandler(s.db)
+	taskHandler := handlers.NewTaskHandler(s.db)
 
 	// API路由组 - 注意这里使用 /api 而不是 /api/v1 以匹配前端配置
 	api := router.Group("/api")
@@ -113,9 +116,6 @@ func (s *Server) setupRouter() {
 	// 上传图片静态目录（供图片链接访问）
 	router.Static("/uploads", "./uploads")
 
-	// 文档处理器
-	documentHandler := handlers.NewDocumentHandler(s.db)
-
 	// 文档相关路由（带路径的路由放在 /:id 之前）
 	documents := api.Group("/documents")
 	documents.Use(middleware.JWTAuth(jwt))
@@ -128,6 +128,28 @@ func (s *Server) setupRouter() {
 		documents.GET("/:id", documentHandler.GetDocument)
 		documents.PUT("/:id", documentHandler.UpdateDocument)
 		documents.DELETE("/:id", documentHandler.DeleteDocument)
+		documents.GET("/:id/tags", tagHandler.GetDocumentTags)
+		documents.PUT("/:id/tags", tagHandler.UpdateDocumentTags)
+	}
+
+	// 标签相关路由
+	tags := api.Group("/tags")
+	tags.Use(middleware.JWTAuth(jwt))
+	{
+		tags.GET("", tagHandler.GetTags)
+		tags.POST("", tagHandler.CreateTag)
+		tags.PUT("/:id", tagHandler.UpdateTag)
+		tags.DELETE("/:id", tagHandler.DeleteTag)
+	}
+
+	// 任务相关路由
+	tasks := api.Group("/tasks")
+	tasks.Use(middleware.JWTAuth(jwt))
+	{
+		tasks.GET("", taskHandler.GetTasks)
+		tasks.POST("", taskHandler.CreateTask)
+		tasks.PUT("/:id", taskHandler.UpdateTask)
+		tasks.DELETE("/:id", taskHandler.DeleteTask)
 	}
 
 	// 404 处理（放在静态和 API 之后）
