@@ -29,12 +29,101 @@
           @click="toggleDocumentExplorer"
           @move="handleDocIconMove"
         />
+        <DesktopIcon
+          icon="🍅"
+          label="番茄钟"
+          :initial-x="pomodoroIconPosition.x"
+          :initial-y="pomodoroIconPosition.y"
+          @click="togglePomodoroTimer"
+          @move="handlePomodoroIconMove"
+        />
+        <DesktopIcon
+          icon="🏷️"
+          label="标签管理"
+          :initial-x="tagIconPosition.x"
+          :initial-y="tagIconPosition.y"
+          @click="toggleTagManager"
+          @move="handleTagIconMove"
+        />
+        <DesktopIcon
+          icon="📋"
+          label="学习任务"
+          :initial-x="taskIconPosition.x"
+          :initial-y="taskIconPosition.y"
+          @click="toggleTaskManager"
+          @move="handleTaskIconMove"
+        />
 
         <div class="windows-container">
           <TransitionGroup name="window-list">
             <template v-for="win in windows" :key="win.id">
+              <DocumentExplorer
+                v-if="win.isDocumentExplorer"
+                :win="win"
+                :sidebar-mode="!!win.sidebarMode"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @dock-sidebar="handleDockToSidebar"
+                @undock-sidebar="handleUndockFromSidebar"
+                @open-document="openDocumentToWindow"
+                @import-document="importDocument"
+              />
+              
               <WindowComponent
-                v-if="!win.isDocumentExplorer"
+                v-else-if="win.isPomodoroTimer"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <PomodoroTimer @complete="handlePomodoroComplete" />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else-if="win.isTagManager"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <TagManager @tags-updated="handleTagsUpdated" />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else-if="win.isTaskManager"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <TaskManager />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else
                 :win="win"
                 :sidebar-state="sidebarState"
                 @activate="setActiveWindow"
@@ -57,23 +146,6 @@
                   />
                 </div>
               </WindowComponent>
-              
-              <DocumentExplorer
-                v-else
-                :win="win"
-                :sidebar-mode="!!win.sidebarMode"
-                @activate="setActiveWindow"
-                @close="closeWindow"
-                @maximize="toggleMaximize"
-                @minimize="toggleMinimize"
-                @move="updateWindowPosition"
-                @resize="updateWindowSize"
-                @update-title="updateWindowTitle"
-                @dock-sidebar="handleDockToSidebar"
-                @undock-sidebar="handleUndockFromSidebar"
-                @open-document="openDocumentToWindow"
-                @import-document="importDocument"
-              />
             </template>
           </TransitionGroup>
         </div>
@@ -139,6 +211,9 @@ import ContextMenu from '../components/ContextMenu.vue'
 import Taskbar from '../components/Taskbar.vue'
 import CustomModal from '../components/CustomModal.vue'
 import CustomInput from '../components/CustomInput.vue'
+import PomodoroTimer from '../components/PomodoroTimer.vue'
+import TagManager from '../components/TagManager.vue'
+import TaskManager from '../components/TaskManager.vue'
 import { useTheme } from '../composables/useTheme'
 import { useAudio } from '../composables/useAudio'
 import { useSidebar } from '../composables/useSidebar'
@@ -157,6 +232,9 @@ const {
   activeWindowId,
   iconPosition,
   docIconPosition,
+  pomodoroIconPosition,
+  tagIconPosition,
+  taskIconPosition,
   groupedWindows,
   createWindow,
   closeWindow,
@@ -170,7 +248,10 @@ const {
   getWindowById,
   restoreState,
   restoreIconPosition,
-  restoreDocIconPosition
+  restoreDocIconPosition,
+  restorePomodoroIconPosition,
+  restoreTagIconPosition,
+  restoreTaskIconPosition
 } = useWindowManager()
 const { 
   uploadDocument, 
@@ -620,6 +701,121 @@ const handleDocIconMove = (x, y) => {
   docIconPosition.value = { x, y }
 }
 
+const handlePomodoroIconMove = (x, y) => {
+  pomodoroIconPosition.value = { x, y }
+}
+
+const handleTagIconMove = (x, y) => {
+  tagIconPosition.value = { x, y }
+}
+
+const handleTaskIconMove = (x, y) => {
+  taskIconPosition.value = { x, y }
+}
+
+const getPomodoroTimerWindow = () => {
+  return windows.value.find(w => w.isPomodoroTimer)
+}
+
+const togglePomodoroTimer = () => {
+  const existingTimer = getPomodoroTimerWindow()
+  if (existingTimer) {
+    if (existingTimer.isMinimized) {
+      toggleMinimize(existingTimer.id)
+    }
+    setActiveWindow(existingTimer.id)
+  } else {
+    createPomodoroTimer()
+  }
+}
+
+const createPomodoroTimer = () => {
+  const id = createWindow({ 
+    title: '番茄钟', 
+    content: '', 
+    isPomodoroTimer: true,
+    width: 320,
+    height: 420,
+    x: 200,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const getTagManagerWindow = () => {
+  return windows.value.find(w => w.isTagManager)
+}
+
+const toggleTagManager = () => {
+  const existingManager = getTagManagerWindow()
+  if (existingManager) {
+    if (existingManager.isMinimized) {
+      toggleMinimize(existingManager.id)
+    }
+    setActiveWindow(existingManager.id)
+  } else {
+    createTagManager()
+  }
+}
+
+const createTagManager = () => {
+  const id = createWindow({ 
+    title: '标签管理', 
+    content: '', 
+    isTagManager: true,
+    width: 400,
+    height: 500,
+    x: 300,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const getTaskManagerWindow = () => {
+  return windows.value.find(w => w.isTaskManager)
+}
+
+const toggleTaskManager = () => {
+  const existingManager = getTaskManagerWindow()
+  if (existingManager) {
+    if (existingManager.isMinimized) {
+      toggleMinimize(existingManager.id)
+    }
+    setActiveWindow(existingManager.id)
+  } else {
+    createTaskManager()
+  }
+}
+
+const createTaskManager = () => {
+  const id = createWindow({ 
+    title: '学习任务', 
+    content: '', 
+    isTaskManager: true,
+    width: 650,
+    height: 550,
+    x: 400,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const handlePomodoroComplete = () => {
+  showAlert('🎉 恭喜！完成了一个番茄钟！')
+}
+
+const handleTagsUpdated = () => {
+}
+
 const getDocumentExplorerWindow = () => {
   return windows.value.find(w => w.isDocumentExplorer)
 }
@@ -688,6 +884,9 @@ const handleCloseWindow = async (windowId) => {
 onMounted(async () => {
   restoreIconPosition()
   restoreDocIconPosition()
+  restorePomodoroIconPosition()
+  restoreTagIconPosition()
+  restoreTaskIconPosition()
   const hasRestored = restoreState()
   await fetchDocuments()
 

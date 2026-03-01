@@ -3,6 +3,9 @@ import { ref, computed, watch } from 'vue'
 const STORAGE_KEY = 'windowManagerState'
 const ICON_STORAGE_KEY = 'desktopIconPosition'
 const DOC_ICON_STORAGE_KEY = 'docIconPosition'
+const POMODORO_ICON_STORAGE_KEY = 'pomodoroIconPosition'
+const TAG_ICON_STORAGE_KEY = 'tagIconPosition'
+const TASK_ICON_STORAGE_KEY = 'taskIconPosition'
 const GROUPS_STORAGE_KEY = 'windowGroups'
 
 let idCounter = 1
@@ -18,6 +21,9 @@ export function useWindowManager() {
   const activeWindowId = ref(null)
   const iconPosition = ref({ x: 20, y: 20 })
   const docIconPosition = ref({ x: 120, y: 20 })
+  const pomodoroIconPosition = ref({ x: 220, y: 20 })
+  const tagIconPosition = ref({ x: 20, y: 120 })
+  const taskIconPosition = ref({ x: 120, y: 120 })
   const windowGroups = ref([...DEFAULT_GROUPS])
 
   const windowsList = computed(() => {
@@ -45,6 +51,9 @@ export function useWindowManager() {
         documentId: w.documentId || null,
         groupId: w.groupId || 'default',
         isDocumentExplorer: w.isDocumentExplorer || false,
+        isPomodoroTimer: w.isPomodoroTimer || false,
+        isTagManager: w.isTagManager || false,
+        isTaskManager: w.isTaskManager || false,
         sidebarMode: w.sidebarMode || false,
         sidebarSide: w.sidebarSide || null
       })),
@@ -60,6 +69,18 @@ export function useWindowManager() {
 
   const saveDocIconPosition = () => {
     localStorage.setItem(DOC_ICON_STORAGE_KEY, JSON.stringify(docIconPosition.value))
+  }
+
+  const savePomodoroIconPosition = () => {
+    localStorage.setItem(POMODORO_ICON_STORAGE_KEY, JSON.stringify(pomodoroIconPosition.value))
+  }
+
+  const saveTagIconPosition = () => {
+    localStorage.setItem(TAG_ICON_STORAGE_KEY, JSON.stringify(tagIconPosition.value))
+  }
+
+  const saveTaskIconPosition = () => {
+    localStorage.setItem(TASK_ICON_STORAGE_KEY, JSON.stringify(taskIconPosition.value))
   }
 
   const restoreState = () => {
@@ -112,6 +133,48 @@ export function useWindowManager() {
     return false
   }
 
+  const restorePomodoroIconPosition = () => {
+    const saved = localStorage.getItem(POMODORO_ICON_STORAGE_KEY)
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved)
+        pomodoroIconPosition.value = pos
+        return true
+      } catch (e) {
+        console.error('Failed to restore pomodoro icon position:', e)
+      }
+    }
+    return false
+  }
+
+  const restoreTagIconPosition = () => {
+    const saved = localStorage.getItem(TAG_ICON_STORAGE_KEY)
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved)
+        tagIconPosition.value = pos
+        return true
+      } catch (e) {
+        console.error('Failed to restore tag icon position:', e)
+      }
+    }
+    return false
+  }
+
+  const restoreTaskIconPosition = () => {
+    const saved = localStorage.getItem(TASK_ICON_STORAGE_KEY)
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved)
+        taskIconPosition.value = pos
+        return true
+      } catch (e) {
+        console.error('Failed to restore task icon position:', e)
+      }
+    }
+    return false
+  }
+
   const createWindow = (options = {}) => {
     const id = idCounter++
     zIndexCounter++
@@ -130,6 +193,9 @@ export function useWindowManager() {
       previewContent: options.previewContent || '',
       documentId: options.documentId || null,
       isDocumentExplorer: !!options.isDocumentExplorer,
+      isPomodoroTimer: !!options.isPomodoroTimer,
+      isTagManager: !!options.isTagManager,
+      isTaskManager: !!options.isTaskManager,
       sidebarMode: !!options.sidebarMode,
       sidebarSide: options.sidebarSide || null
     }
@@ -286,6 +352,9 @@ export function useWindowManager() {
   watch(activeWindowId, saveState)
   watch(iconPosition, saveIconPosition, { deep: true })
   watch(docIconPosition, saveDocIconPosition, { deep: true })
+  watch(pomodoroIconPosition, savePomodoroIconPosition, { deep: true })
+  watch(tagIconPosition, saveTagIconPosition, { deep: true })
+  watch(taskIconPosition, saveTaskIconPosition, { deep: true })
   watch(windowGroups, saveState, { deep: true })
 
   return {
@@ -293,6 +362,9 @@ export function useWindowManager() {
     activeWindowId,
     iconPosition,
     docIconPosition,
+    pomodoroIconPosition,
+    tagIconPosition,
+    taskIconPosition,
     windowGroups,
     windowsList,
     groupedWindows,
@@ -310,6 +382,9 @@ export function useWindowManager() {
     restoreState,
     restoreIconPosition,
     restoreDocIconPosition,
+    restorePomodoroIconPosition,
+    restoreTagIconPosition,
+    restoreTaskIconPosition,
     createGroup,
     deleteGroup,
     updateGroup,

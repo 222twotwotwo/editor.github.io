@@ -112,4 +112,22 @@ export const postAPI = {
   like: (id) => api.post(`/api/posts/${id}/like`)
 }
 
+export const tagAPI = {
+  list: () => api.get('/api/tags'),
+  create: (data) => api.post('/api/tags', data),
+  update: (id, data) => api.put(`/api/tags/${id}`, data),
+  delete: (id) => api.delete(`/api/tags/${id}`),
+  getDocumentTags: (documentId) => api.get(`/api/documents/${documentId}/tags`),
+  addDocumentTag: (documentId, tagId) => api.post(`/api/documents/${documentId}/tags`, { tag_id: tagId }),
+  removeDocumentTag: (documentId, tagId) => api.delete(`/api/documents/${documentId}/tags/${tagId}`)
+}
+
+export const taskAPI = {
+  list: (params = {}) => api.get('/api/tasks', { params }),
+  create: (data) => api.post('/api/tasks', data),
+  update: (id, data) => api.put(`/api/tasks/${id}`, data),
+  delete: (id) => api.delete(`/api/tasks/${id}`),
+  updateStatus: (id, status) => api.put(`/api/tasks/${id}`, { status })
+}
+
 export default api
