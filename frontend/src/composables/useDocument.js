@@ -1,9 +1,11 @@
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { documentAPI } from '../services/api'
 
 // 模块级共享状态，保证 EditorView 与 SidebarRight 等使用同一份文档列表，保存/删除后列表同步刷新
 const documents = ref([])
 const loading = ref(false)
+// 防止多个组件同时调用 useDocument() 时重复触发初始化请求
+let initialized = false
 
 const STORAGE_KEY_LAST_ACCESS = 'documentLastAccessed'
 
@@ -163,10 +165,12 @@ export function useDocument() {
     }
   }
 
-  onMounted(() => {
+  // 仅首次调用时自动初始化，避免多组件重复注册 onMounted 导致多次重复请求
+  if (!initialized) {
+    initialized = true
     fetchDocuments()
     fetchStats()
-  })
+  }
 
   return {
     documents,

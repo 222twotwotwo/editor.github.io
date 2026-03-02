@@ -67,6 +67,10 @@ const props = defineProps({
   confirmText: {
     type: String,
     default: '确定'
+  },
+  preventClose: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -99,7 +103,9 @@ const handleOverlayClick = () => {
 
 const handleConfirm = () => {
   emit('confirm')
-  handleClose()
+  if (!props.preventClose) {
+    handleClose()
+  }
 }
 
 const handleCancel = () => {

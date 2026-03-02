@@ -31,8 +31,10 @@
       <div class="controls">
         <button class="btn min" @mousedown.stop @click="minimize">−</button>
         <button class="btn max" @mousedown.stop @click="toggleMaximize">{{ win.isMaximized ? '❒' : '□' }}</button>
-        <button class="btn save" @mousedown.stop @click="saveDocument" title="保存到文档">💾</button>
-        <button class="btn switch-to-original" @mousedown.stop @click="switchToOriginal" title="切换到专注模式">↩</button>
+        <template v-if="!win.isPomodoroTimer && !win.isTagManager && !win.isTaskManager">
+          <button class="btn save" @mousedown.stop @click="saveDocument" title="保存到文档">💾</button>
+          <button class="btn switch-to-original" @mousedown.stop @click="switchToOriginal" title="切换到专注模式">↩</button>
+        </template>
         <button class="btn close" @mousedown.stop @click="close">×</button>
       </div>
     </div>

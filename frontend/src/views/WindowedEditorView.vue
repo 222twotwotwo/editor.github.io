@@ -29,12 +29,102 @@
           @click="toggleDocumentExplorer"
           @move="handleDocIconMove"
         />
+        <DesktopIcon
+          icon="🍅"
+          label="番茄钟"
+          :initial-x="pomodoroIconPosition.x"
+          :initial-y="pomodoroIconPosition.y"
+          @click="togglePomodoroTimer"
+          @move="handlePomodoroIconMove"
+        />
+        <DesktopIcon
+          icon="🏷️"
+          label="标签管理"
+          :initial-x="tagIconPosition.x"
+          :initial-y="tagIconPosition.y"
+          @click="toggleTagManager"
+          @move="handleTagIconMove"
+        />
+        <DesktopIcon
+          icon="📋"
+          label="学习任务"
+          :initial-x="taskIconPosition.x"
+          :initial-y="taskIconPosition.y"
+          @click="toggleTaskManager"
+          @move="handleTaskIconMove"
+        />
 
         <div class="windows-container">
           <TransitionGroup name="window-list">
             <template v-for="win in windows" :key="win.id">
+              <DocumentExplorer
+                v-if="win.isDocumentExplorer"
+                :win="win"
+                :sidebar-mode="!!win.sidebarMode"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @dock-sidebar="handleDockToSidebar"
+                @undock-sidebar="handleUndockFromSidebar"
+                @open-document="openDocumentToWindow"
+                @import-document="importDocument"
+                @doc-context-menu="handleDocContextMenu"
+              />
+              
               <WindowComponent
-                v-if="!win.isDocumentExplorer"
+                v-else-if="win.isPomodoroTimer"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <PomodoroTimer @complete="handlePomodoroComplete" />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else-if="win.isTagManager"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <TagManager @tags-updated="handleTagsUpdated" />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else-if="win.isTaskManager"
+                :win="win"
+                :sidebar-state="sidebarState"
+                @activate="setActiveWindow"
+                @close="closeWindow"
+                @maximize="toggleMaximize"
+                @minimize="toggleMinimize"
+                @move="updateWindowPosition"
+                @resize="updateWindowSize"
+                @update-title="updateWindowTitle"
+                @context-menu="handleWindowContextMenu"
+              >
+                <TaskManager />
+              </WindowComponent>
+              
+              <WindowComponent
+                v-else
                 :win="win"
                 :sidebar-state="sidebarState"
                 @activate="setActiveWindow"
@@ -57,23 +147,6 @@
                   />
                 </div>
               </WindowComponent>
-              
-              <DocumentExplorer
-                v-else
-                :win="win"
-                :sidebar-mode="!!win.sidebarMode"
-                @activate="setActiveWindow"
-                @close="closeWindow"
-                @maximize="toggleMaximize"
-                @minimize="toggleMinimize"
-                @move="updateWindowPosition"
-                @resize="updateWindowSize"
-                @update-title="updateWindowTitle"
-                @dock-sidebar="handleDockToSidebar"
-                @undock-sidebar="handleUndockFromSidebar"
-                @open-document="openDocumentToWindow"
-                @import-document="importDocument"
-              />
             </template>
           </TransitionGroup>
         </div>
@@ -97,6 +170,42 @@
       @close="closeContextMenu"
       @select="handleContextMenuSelect"
     />
+
+    <!-- 文档标签选择面板 -->
+    <Teleport to="body">
+      <div
+        v-if="tagPickerVisible"
+        class="tag-picker-overlay"
+        @click.self="closeTagPicker"
+        @contextmenu.prevent="closeTagPicker"
+      >
+        <div
+          class="tag-picker-panel"
+          :style="{ left: tagPickerPosition.x + 'px', top: tagPickerPosition.y + 'px' }"
+        >
+          <div class="tag-picker-header">
+            <span>🏷️ 为文档添加标签</span>
+            <button class="tag-picker-close" @click="closeTagPicker">×</button>
+          </div>
+          <div v-if="tagPickerAllTags.length === 0" class="tag-picker-empty">
+            暂无标签，请先在标签管理中创建
+          </div>
+          <div v-else class="tag-picker-list">
+            <div
+              v-for="tag in tagPickerAllTags"
+              :key="tag.id"
+              class="tag-picker-item"
+              :class="{ active: isTagActive(tag.id) }"
+              @click="toggleDocTag(tag)"
+            >
+              <span class="tag-picker-dot" :style="{ background: tag.color }"></span>
+              <span class="tag-picker-name">{{ tag.name }}</span>
+              <span v-if="isTagActive(tag.id)" class="tag-picker-check">✓</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 新建MD弹窗 -->
     <CustomModal
@@ -139,6 +248,10 @@ import ContextMenu from '../components/ContextMenu.vue'
 import Taskbar from '../components/Taskbar.vue'
 import CustomModal from '../components/CustomModal.vue'
 import CustomInput from '../components/CustomInput.vue'
+import PomodoroTimer from '../components/PomodoroTimer.vue'
+import TagManager from '../components/TagManager.vue'
+import TaskManager from '../components/TaskManager.vue'
+import { tagAPI } from '../services/api'
 import { useTheme } from '../composables/useTheme'
 import { useAudio } from '../composables/useAudio'
 import { useSidebar } from '../composables/useSidebar'
@@ -157,6 +270,9 @@ const {
   activeWindowId,
   iconPosition,
   docIconPosition,
+  pomodoroIconPosition,
+  tagIconPosition,
+  taskIconPosition,
   groupedWindows,
   createWindow,
   closeWindow,
@@ -170,7 +286,10 @@ const {
   getWindowById,
   restoreState,
   restoreIconPosition,
-  restoreDocIconPosition
+  restoreDocIconPosition,
+  restorePomodoroIconPosition,
+  restoreTagIconPosition,
+  restoreTaskIconPosition
 } = useWindowManager()
 const { 
   uploadDocument, 
@@ -193,6 +312,14 @@ const contextMenu = ref({
   type: null,
   windowId: null
 })
+
+// 文档标签选择面板状态
+const tagPickerVisible = ref(false)
+const tagPickerPosition = ref({ x: 0, y: 0 })
+const tagPickerDoc = ref(null)
+const tagPickerDocTags = ref([])
+const tagPickerAllTags = ref([])
+const tagPickerCallback = ref(null)
 const newEditorModalVisible = ref(false)
 const newEditorTitle = ref('')
 const newEditorInputRef = ref(null)
@@ -404,6 +531,14 @@ const openDocumentToWindow = async (doc) => {
       toggleMinimize(winId)
     }
     setActiveWindow(winId)
+    return
+  }
+
+  // 若 doc 已包含 content 字段（DocumentExplorer 传来的完整对象），直接使用，无需重复 fetch
+  if (doc.content != null) {
+    const id = doCreateWindow(doc.title, doc.content, doc.id)
+    touchDocumentAccess(doc.id)
+    setActiveWindow(id)
     return
   }
 
@@ -620,6 +755,170 @@ const handleDocIconMove = (x, y) => {
   docIconPosition.value = { x, y }
 }
 
+const handlePomodoroIconMove = (x, y) => {
+  pomodoroIconPosition.value = { x, y }
+}
+
+const handleTagIconMove = (x, y) => {
+  tagIconPosition.value = { x, y }
+}
+
+const handleTaskIconMove = (x, y) => {
+  taskIconPosition.value = { x, y }
+}
+
+const getPomodoroTimerWindow = () => {
+  return windows.value.find(w => w.isPomodoroTimer)
+}
+
+const togglePomodoroTimer = () => {
+  const existingTimer = getPomodoroTimerWindow()
+  if (existingTimer) {
+    if (existingTimer.isMinimized) {
+      toggleMinimize(existingTimer.id)
+    }
+    setActiveWindow(existingTimer.id)
+  } else {
+    createPomodoroTimer()
+  }
+}
+
+const createPomodoroTimer = () => {
+  const id = createWindow({ 
+    title: '番茄钟', 
+    content: '', 
+    isPomodoroTimer: true,
+    width: 320,
+    height: 420,
+    x: 200,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const getTagManagerWindow = () => {
+  return windows.value.find(w => w.isTagManager)
+}
+
+const toggleTagManager = () => {
+  const existingManager = getTagManagerWindow()
+  if (existingManager) {
+    if (existingManager.isMinimized) {
+      toggleMinimize(existingManager.id)
+    }
+    setActiveWindow(existingManager.id)
+  } else {
+    createTagManager()
+  }
+}
+
+const createTagManager = () => {
+  const id = createWindow({ 
+    title: '标签管理', 
+    content: '', 
+    isTagManager: true,
+    width: 400,
+    height: 500,
+    x: 300,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const getTaskManagerWindow = () => {
+  return windows.value.find(w => w.isTaskManager)
+}
+
+const toggleTaskManager = () => {
+  const existingManager = getTaskManagerWindow()
+  if (existingManager) {
+    if (existingManager.isMinimized) {
+      toggleMinimize(existingManager.id)
+    }
+    setActiveWindow(existingManager.id)
+  } else {
+    createTaskManager()
+  }
+}
+
+const createTaskManager = () => {
+  const id = createWindow({ 
+    title: '学习任务', 
+    content: '', 
+    isTaskManager: true,
+    width: 650,
+    height: 550,
+    x: 400,
+    y: 100
+  })
+  windowContents.value[id] = ''
+  windowPreviews.value[id] = ''
+  windowDocumentIds.value[id] = null
+  return id
+}
+
+const handlePomodoroComplete = () => {
+  showAlert('🎉 恭喜！完成了一个番茄钟！')
+}
+
+const handleTagsUpdated = () => {
+}
+
+const handleDocContextMenu = async (e, doc, docTags, updateCallback) => {
+  let allTags = []
+  try {
+    const res = await tagAPI.list()
+    if (res?.data?.list) allTags = res.data.list
+  } catch (err) {
+    console.error('获取标签列表失败', err)
+  }
+
+  tagPickerDoc.value = doc
+  tagPickerDocTags.value = [...docTags]
+  tagPickerAllTags.value = allTags
+  tagPickerCallback.value = updateCallback
+  tagPickerPosition.value = { x: e.clientX, y: e.clientY }
+  tagPickerVisible.value = true
+}
+
+const isTagActive = (tagId) => {
+  return tagPickerDocTags.value.some(t => t.id === tagId)
+}
+
+const toggleDocTag = async (tag) => {
+  if (!tagPickerDoc.value) return
+  const docId = tagPickerDoc.value.id
+  const active = isTagActive(tag.id)
+  try {
+    if (active) {
+      await tagAPI.removeDocumentTag(docId, tag.id)
+      tagPickerDocTags.value = tagPickerDocTags.value.filter(t => t.id !== tag.id)
+    } else {
+      await tagAPI.addDocumentTag(docId, tag.id)
+      tagPickerDocTags.value = [...tagPickerDocTags.value, tag]
+    }
+    if (tagPickerCallback.value) {
+      tagPickerCallback.value(docId, [...tagPickerDocTags.value])
+    }
+  } catch (err) {
+    showAlert(err?.message || '操作标签失败，请稍后重试', '错误')
+  }
+}
+
+const closeTagPicker = () => {
+  tagPickerVisible.value = false
+  tagPickerDoc.value = null
+  tagPickerDocTags.value = []
+  tagPickerAllTags.value = []
+  tagPickerCallback.value = null
+}
+
 const getDocumentExplorerWindow = () => {
   return windows.value.find(w => w.isDocumentExplorer)
 }
@@ -688,6 +987,9 @@ const handleCloseWindow = async (windowId) => {
 onMounted(async () => {
   restoreIconPosition()
   restoreDocIconPosition()
+  restorePomodoroIconPosition()
+  restoreTagIconPosition()
+  restoreTaskIconPosition()
   const hasRestored = restoreState()
   await fetchDocuments()
 
@@ -854,5 +1156,121 @@ onMounted(async () => {
 .window-list-leave-to {
   opacity: 0;
   transform: scale(0.9) translateY(-20px);
+}
+</style>
+
+<style>
+.tag-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+}
+
+.tag-picker-panel {
+  position: fixed;
+  min-width: 220px;
+  max-width: 280px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  overflow: hidden;
+  z-index: 10002;
+}
+
+[data-theme="dark"] .tag-picker-panel {
+  background: #2a2a2a;
+  border-color: #444;
+}
+
+.tag-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #222;
+  border-bottom: 1px solid #ddd;
+}
+
+[data-theme="dark"] .tag-picker-header {
+  color: #eee;
+  border-bottom-color: #444;
+}
+
+.tag-picker-close {
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+  color: #555;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.tag-picker-close:hover {
+  opacity: 1;
+}
+
+.tag-picker-empty {
+  padding: 20px 14px;
+  font-size: 13px;
+  color: #888;
+  text-align: center;
+}
+
+.tag-picker-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.tag-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 13px;
+  color: #222;
+}
+
+[data-theme="dark"] .tag-picker-item {
+  color: #eee;
+}
+
+.tag-picker-item:hover {
+  background: rgba(0,0,0,0.07);
+}
+
+[data-theme="dark"] .tag-picker-item:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.tag-picker-item.active {
+  background: rgba(59,130,246,0.1);
+}
+
+.tag-picker-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+
+.tag-picker-name {
+  flex: 1;
+}
+
+.tag-picker-check {
+  color: #3b82f6;
+  font-weight: 700;
+  font-size: 14px;
 }
 </style>

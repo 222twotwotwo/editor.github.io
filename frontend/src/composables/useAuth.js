@@ -68,8 +68,6 @@ export function useAuth() {
         password
       })
       
-      console.log('登录响应:', response) // 调试信息
-      
       // 根据后端实际返回的数据结构调整
       if (response.success && response.data) {
         const { token, user } = response.data
@@ -88,7 +86,6 @@ export function useAuth() {
         return { success: false, error: error.value }
       }
     } catch (err) {
-      console.error('登录错误:', err) // 调试信息
       error.value = err.error || err.message || '登录失败'
       return { success: false, error: error.value }
     } finally {

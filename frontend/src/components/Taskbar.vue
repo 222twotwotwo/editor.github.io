@@ -63,16 +63,18 @@
           v-for="win in group.windows"
           :key="win.id"
           class="taskbar-item"
-          :class="{ active: win.isActive, minimized: win.isMinimized, unsaved: !win.isDocumentExplorer && win.content !== win.savedContent }"
+          :class="{ active: win.isActive, minimized: win.isMinimized, unsaved: !win.isDocumentExplorer && !win.isPomodoroTimer && !win.isTagManager && !win.isTaskManager && win.content !== win.savedContent }"
           :style="getItemStyle(group.color)"
           @click="handleItemClick(win)"
           @contextmenu.prevent="handleItemContextMenu($event, win)"
-          @mouseenter="!win.isDocumentExplorer && showPreview(win, $event)"
+          @mouseenter="!win.isDocumentExplorer && !win.isPomodoroTimer && !win.isTagManager && !win.isTaskManager && showPreview(win, $event)"
           @mouseleave="hidePreview"
         >
-          <span class="item-icon">{{ win.isDocumentExplorer ? '📂' : '📝' }}</span>
+          <span class="item-icon">
+            {{ win.isDocumentExplorer ? '📂' : (win.isPomodoroTimer ? '🍅' : (win.isTagManager ? '🏷️' : (win.isTaskManager ? '📋' : '📝'))) }}
+          </span>
           <span class="item-title">
-            <span v-if="!win.isDocumentExplorer && win.content !== win.savedContent" class="unsaved-dot">•</span>
+            <span v-if="!win.isDocumentExplorer && !win.isPomodoroTimer && !win.isTagManager && !win.isTaskManager && win.content !== win.savedContent" class="unsaved-dot">•</span>
             {{ win.title }}
           </span>
         </div>
@@ -96,10 +98,13 @@
     >
       <div class="preview-header">
         <span class="preview-title">{{ previewWindow.title }}</span>
-        <span v-if="previewWindow.content !== previewWindow.savedContent" class="preview-unsaved">• 未保存</span>
+        <span v-if="!previewWindow.isPomodoroTimer && !previewWindow.isTagManager && !previewWindow.isTaskManager && previewWindow.content !== previewWindow.savedContent" class="preview-unsaved">• 未保存</span>
       </div>
-      <div class="preview-content">
+      <div v-if="!previewWindow.isPomodoroTimer && !previewWindow.isTagManager && !previewWindow.isTaskManager" class="preview-content">
         <div class="preview-content-inner">{{ previewContent }}</div>
+      </div>
+      <div v-else class="preview-content">
+        <div class="preview-content-inner">点击打开{{ previewWindow.title }}</div>
       </div>
     </div>
   </div>

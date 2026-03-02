@@ -88,6 +88,7 @@
             :key="doc.id"
             class="document-item"
             @click="openDocumentToWindow(doc)"
+            @contextmenu.prevent="handleDocContextMenu($event, doc)"
           >
             <div class="document-icon">📄</div>
             <div class="document-info">
@@ -95,6 +96,15 @@
               <div class="document-meta">
                 <span>{{ formatFileSize(doc.file_size) }}</span>
                 <span>{{ formatDate(doc.updated_at) }}</span>
+              </div>
+              <div v-if="docTagsMap[doc.id] && docTagsMap[doc.id].length" class="doc-tag-dots">
+                <span
+                  v-for="tag in docTagsMap[doc.id]"
+                  :key="tag.id"
+                  class="doc-tag-dot"
+                  :style="{ background: tag.color }"
+                  :title="tag.name"
+                ></span>
               </div>
             </div>
           </div>
@@ -153,6 +163,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useDocument } from '../composables/useDocument'
+import { tagAPI } from '../services/api'
 import { formatFileSize, formatDate } from '../utils/formatUtils'
 
 const props = defineProps({
@@ -180,7 +191,8 @@ const emit = defineEmits([
   'dock-sidebar',
   'undock-sidebar',
   'open-document',
-  'import-document'
+  'import-document',
+  'doc-context-menu'
 ])
 
 const { 
@@ -190,6 +202,43 @@ const {
   fetchDocuments,
   getDocument 
 } = useDocument()
+
+// 文档标签缓存：{ [docId]: Tag[] }
+const docTagsMap = ref({})
+
+const loadDocTags = async (docId) => {
+  try {
+    const res = await tagAPI.getDocumentTags(docId)
+    let tags = []
+    if (res?.data?.list) {
+      tags = res.data.list
+    } else if (Array.isArray(res?.data)) {
+      tags = res.data
+    }
+    docTagsMap.value = { ...docTagsMap.value, [docId]: tags }
+  } catch {
+    docTagsMap.value = { ...docTagsMap.value, [docId]: [] }
+  }
+}
+
+// 分批并发加载标签，每批最多 5 个请求，避免同时发起大量请求
+const loadAllDocTags = async () => {
+  const docs = sortedDocuments.value
+  if (!docs?.length) return
+  const BATCH_SIZE = 5
+  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+    const batch = docs.slice(i, i + BATCH_SIZE)
+    await Promise.all(batch.map(d => loadDocTags(d.id)))
+  }
+}
+
+const handleDocContextMenu = (e, doc) => {
+  e.preventDefault()
+  e.stopPropagation()
+  emit('doc-context-menu', e, doc, docTagsMap.value[doc.id] || [], (docId, updatedTags) => {
+    docTagsMap.value = { ...docTagsMap.value, [docId]: updatedTags }
+  })
+}
 
 const isEditingTitle = ref(false)
 const editingTitle = ref('')
@@ -434,8 +483,9 @@ const handleClose = () => {
   emit('close', props.win.id)
 }
 
-onMounted(() => {
-  fetchDocuments()
+onMounted(async () => {
+  await fetchDocuments()
+  await loadAllDocTags()
 })
 
 onUnmounted(() => {
@@ -823,5 +873,21 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   cursor: sw-resize;
+}
+
+.doc-tag-dots {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.doc-tag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
 </style>
