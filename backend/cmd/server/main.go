@@ -20,7 +20,7 @@ func main() {
 	cfg := config.Load()
 
 	// 初始化数据库
-	db, err := database.InitMySQL(cfg.Database)
+	db, err := database.InitMySQL(cfg.Database, cfg.Server.Mode == "debug")
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}

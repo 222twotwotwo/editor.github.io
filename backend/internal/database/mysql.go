@@ -5,120 +5,117 @@ import (
 	"fmt"
 	"log"
 	"markdown-editor-backend/internal/config"
+	"regexp"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// InitMySQL 初始化MySQL数据库连接
-// 修复点：增加密码非空校验、适配MySQL8.0+认证插件、完善错误提示
-func InitMySQL(cfg config.DatabaseConfig) (*sql.DB, error) {
-	// 核心修复1：密码非空校验（解决using password: NO问题）
+// validDBName 仅允许字母、数字、下划线，防止 SQL 注入
+var validDBName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// InitMySQL 初始化 MySQL 数据库连接。
+// devMode 为 true 时会在首次建库后插入测试账号（仅限开发环境）。
+func InitMySQL(cfg config.DatabaseConfig, devMode bool) (*sql.DB, error) {
 	if cfg.Password == "" {
-		return nil, fmt.Errorf("数据库密码为空！请检查.env文件的DB_PASSWORD配置")
+		return nil, fmt.Errorf("数据库密码为空，请检查 .env 文件的 DB_PASSWORD 配置")
+	}
+	if !validDBName.MatchString(cfg.DBName) {
+		return nil, fmt.Errorf("数据库名 %q 包含非法字符，仅允许字母、数字和下划线", cfg.DBName)
 	}
 
-	// 核心修复2：DSN添加allowNativePasswords=true，适配MySQL8.0+认证插件
-	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci&timeout=30s&readTimeout=30s&writeTimeout=30s&allowNativePasswords=true",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName,
-	)
-
+	dsn := buildDSN(cfg, cfg.DBName)
 	log.Printf("正在连接数据库: %s@%s:%d/%s", cfg.User, cfg.Host, cfg.Port, cfg.DBName)
 
-	// 打开数据库连接池
-	db, err := sql.Open("mysql", dsn)
+	db, err := openDB(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %v", err)
 	}
 
-	// 设置连接池参数
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(2 * time.Minute)
-
-	// 测试连接
 	if err := db.Ping(); err != nil {
 		log.Printf("连接失败: %v，尝试创建数据库...", err)
-		// 尝试创建数据库
-		if err := createDatabase(cfg); err != nil {
+		db.Close() // 关闭失败的连接池，避免泄漏
+
+		if err := createDatabase(cfg, devMode); err != nil {
 			return nil, fmt.Errorf("创建数据库失败: %v", err)
 		}
 
-		// 重新连接
-		db, err = sql.Open("mysql", dsn)
+		db, err = openDB(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("重新连接失败: %v", err)
 		}
-
-		// 重新设置连接池参数
-		db.SetMaxOpenConns(25)
-		db.SetMaxIdleConns(10)
-		db.SetConnMaxLifetime(5 * time.Minute)
-		db.SetConnMaxIdleTime(2 * time.Minute)
-
 		if err := db.Ping(); err != nil {
+			db.Close()
 			return nil, fmt.Errorf("重新连接后仍失败: %v", err)
 		}
 	}
 
-	// 确保默认账号 admin/testuser 密码为 123456（兼容旧库中错误哈希）
-	ensureDefaultPasswords(db)
-
-	log.Println("✅ 数据库连接成功")
+	log.Println("数据库连接成功")
 	return db, nil
 }
 
-// 默认密码 123456 的 bcrypt 哈希，与 createDatabase 中 INSERT 一致
-const defaultPasswordHash = "$2a$10$rEjFClPfG2GpVpMH1AGJOujHXTemEx6p1LH/S6Rnja.i7fXwsGDBq"
-
-func ensureDefaultPasswords(db *sql.DB) {
-	_, err := db.Exec(
-		"UPDATE users SET password_hash = ? WHERE username IN ('admin', 'testuser')",
-		defaultPasswordHash,
+// buildDSN 构造 MySQL 连接字符串。dbName 为空时连接不指定数据库。
+func buildDSN(cfg config.DatabaseConfig, dbName string) string {
+	return fmt.Sprintf(
+		"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci&timeout=30s&readTimeout=30s&writeTimeout=30s&allowNativePasswords=true",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, dbName,
 	)
-	if err != nil {
-		log.Printf("⚠️ 更新默认账号密码失败（可忽略）: %v", err)
-		return
-	}
 }
 
-// createDatabase 创建数据库和用户表
-// 修复点：临时DSN添加认证兼容参数、优化SQL执行逻辑
-func createDatabase(cfg config.DatabaseConfig) error {
-	// 核心修复3：临时连接DSN同样添加allowNativePasswords=true
-	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/?parseTime=true&timeout=30s&allowNativePasswords=true",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port,
-	)
+// openDB 创建连接池并设置统一参数。
+func openDB(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+	return db, nil
+}
 
+// createDatabase 创建数据库和用户表。devMode 为 true 时额外插入测试账号。
+func createDatabase(cfg config.DatabaseConfig, devMode bool) error {
+	dsn := buildDSN(cfg, "")
 	tempDB, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("创建临时连接失败: %v", err)
 	}
 	defer tempDB.Close()
 
-	// 创建数据库
-	createDBQuery := fmt.Sprintf(
-		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+	// 创建数据库（标识符用反引号防注入）
+	_, err = tempDB.Exec(fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 		cfg.DBName,
-	)
-	_, err = tempDB.Exec(createDBQuery)
+	))
 	if err != nil {
 		return fmt.Errorf("创建数据库失败: %v", err)
 	}
+	log.Printf("数据库 '%s' 创建成功", cfg.DBName)
 
-	log.Printf("✅ 数据库 '%s' 创建成功", cfg.DBName)
-
-	// 切换到新建的数据库
-	_, err = tempDB.Exec(fmt.Sprintf("USE %s", cfg.DBName))
+	// 用带库名的 DSN 新建连接来建表，避免 USE 在连接池中不可靠
+	dbDSN := buildDSN(cfg, cfg.DBName)
+	dbConn, err := sql.Open("mysql", dbDSN)
 	if err != nil {
-		return fmt.Errorf("切换数据库失败: %v", err)
+		return fmt.Errorf("连接新数据库失败: %v", err)
+	}
+	defer dbConn.Close()
+
+	if err := createUsersTable(dbConn); err != nil {
+		return err
 	}
 
-	// 创建用户表（拆分SQL，避免多语句执行风险）
-	createTableQuery := `
+	if devMode {
+		seedTestUsers(dbConn)
+	}
+
+	log.Println("用户表创建成功")
+	return nil
+}
+
+func createUsersTable(db *sql.DB) error {
+	query := `
 		CREATE TABLE IF NOT EXISTS users (
 			id INT AUTO_INCREMENT PRIMARY KEY,
 			username VARCHAR(50) NOT NULL UNIQUE,
@@ -129,25 +126,25 @@ func createDatabase(cfg config.DatabaseConfig) error {
 			INDEX idx_username (username),
 			INDEX idx_email (email),
 			INDEX idx_created_at (created_at)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-	`
-	_, err = tempDB.Exec(createTableQuery)
-	if err != nil {
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+
+	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("创建表失败: %v", err)
 	}
-
-	// 可选：初始化测试用户（密码均为 123456，生产环境请修改或注释）
-	// bcrypt hash for "123456"
-	insertUserQuery := `
-		INSERT IGNORE INTO users (username, email, password_hash) VALUES
-		('admin', 'admin@example.com', '$2a$10$rEjFClPfG2GpVpMH1AGJOujHXTemEx6p1LH/S6Rnja.i7fXwsGDBq'),
-		('testuser', 'test@example.com', '$2a$10$rEjFClPfG2GpVpMH1AGJOujHXTemEx6p1LH/S6Rnja.i7fXwsGDBq');
-	`
-	_, err = tempDB.Exec(insertUserQuery)
-	if err != nil {
-		log.Printf("⚠️ 初始化测试用户失败（非关键错误）: %v", err)
-	}
-
-	log.Println("✅ 用户表创建成功")
 	return nil
+}
+
+// seedTestUsers 仅在开发模式下调用，插入测试账号。
+// 密码为 123456 的 bcrypt 哈希，生产环境不会执行此函数。
+func seedTestUsers(db *sql.DB) {
+	const hash = "$2a$10$rEjFClPfG2GpVpMH1AGJOujHXTemEx6p1LH/S6Rnja.i7fXwsGDBq"
+	_, err := db.Exec(
+		`INSERT IGNORE INTO users (username, email, password_hash) VALUES
+		('admin', 'admin@example.com', ?),
+		('testuser', 'test@example.com', ?)`,
+		hash, hash,
+	)
+	if err != nil {
+		log.Printf("初始化测试用户失败（非关键错误）: %v", err)
+	}
 }
