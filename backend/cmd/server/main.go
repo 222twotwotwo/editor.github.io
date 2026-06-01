@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 
+	"markdown-editor-backend/internal/cache"
 	"markdown-editor-backend/internal/config"
 	"markdown-editor-backend/internal/database"
 	"markdown-editor-backend/internal/server"
@@ -26,8 +27,12 @@ func main() {
 	}
 	defer db.Close()
 
+	// 初始化缓存（连不上时降级为 nil，不阻塞启动）
+	rcache := cache.New(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+	defer rcache.Close()
+
 	// 启动服务器
-	srv := server.NewServer(cfg, db)
+	srv := server.NewServer(cfg, db, rcache)
 	if err := srv.Run(); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}

@@ -22,16 +22,83 @@ api.interceptors.request.use(
   }
 )
 
+// 静默刷新状态：刷新进行中时，并发的 401 请求挂起排队，等新 access token 到手后统一重试
+let isRefreshing = false
+let pendingQueue = []
+const flushQueue = (newToken) => {
+  pendingQueue.forEach((cb) => cb(newToken))
+  pendingQueue = []
+}
+const clearAuthStorage = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem('user')
+}
+
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config
+    const status = error.response?.status
+
+    // access token 过期：用 refresh token 静默换新并重试原请求
+    if (
+      status === 401 &&
+      error.response?.data?.error === 'token_expired' &&
+      originalRequest &&
+      !originalRequest._retried &&
+      localStorage.getItem('refresh_token')
+    ) {
+      originalRequest._retried = true
+
+      // 已有刷新在进行：排队等待，拿到新 token 后重试本请求
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          pendingQueue.push((newToken) => {
+            if (!newToken) {
+              reject(error)
+              return
+            }
+            originalRequest.headers.Authorization = `Bearer ${newToken}`
+            resolve(api(originalRequest))
+          })
+        })
+      }
+
+      isRefreshing = true
+      try {
+        // 用裸 axios 调用，绕过本拦截器，避免刷新失败时递归
+        const resp = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
+          refresh_token: localStorage.getItem('refresh_token')
+        })
+        const newToken = resp.data?.data?.access_token
+        if (!newToken) throw new Error('refresh 响应缺少 access_token')
+        localStorage.setItem('token', newToken)
+        flushQueue(newToken)
+        originalRequest.headers.Authorization = `Bearer ${newToken}`
+        return api(originalRequest)
+      } catch (e) {
+        flushQueue(null) // 通知排队请求：刷新失败
+        clearAuthStorage()
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login'
+        }
+        return Promise.reject({
+          success: false,
+          error: 'token_expired',
+          message: '登录已过期，请重新登录'
+        })
+      } finally {
+        isRefreshing = false
+      }
+    }
+
     if (error.response) {
       const { status, data } = error.response
       switch (status) {
         case 401: {
           const hadToken = !!localStorage.getItem('token')
-          localStorage.removeItem('token')
-          localStorage.removeItem('user')
+          clearAuthStorage()
           // 仅当用户曾登录（有 token）却收到 401 时跳转登录页；游客模式不跳转，可继续浏览
           if (hadToken && window.location.pathname !== '/login') {
             window.location.href = '/login'
@@ -77,8 +144,17 @@ export const authAPI = {
   register: (data) => api.post('/api/auth/register', data),
   login: (data) => api.post('/api/auth/login', data),
   getProfile: () => api.get('/api/users/profile'),
-  logout: () => {
+  // 通知后端吊销 access + refresh token（refresh_token 放 body，access token 由请求拦截器带 header）。
+  // 尽力而为：网络/鉴权失败也不应阻塞本地登出，调用方负责清理本地存储。
+  logout: async () => {
+    const refreshToken = localStorage.getItem('refresh_token')
+    try {
+      await api.post('/api/auth/logout', { refresh_token: refreshToken })
+    } catch (e) {
+      /* 忽略：本地登出照常进行 */
+    }
     localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
   }
 }

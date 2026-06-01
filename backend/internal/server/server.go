@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"markdown-editor-backend/internal/cache"
 	"markdown-editor-backend/internal/config"
 	"markdown-editor-backend/internal/handlers"
 	"markdown-editor-backend/internal/middleware"
@@ -18,13 +19,15 @@ import (
 type Server struct {
 	cfg    *config.Config
 	db     *sql.DB
+	cache  *cache.Cache
 	router *gin.Engine
 }
 
-func NewServer(cfg *config.Config, db *sql.DB) *Server {
+func NewServer(cfg *config.Config, db *sql.DB, c *cache.Cache) *Server {
 	server := &Server{
-		cfg: cfg,
-		db:  db,
+		cfg:   cfg,
+		db:    db,
+		cache: c,
 	}
 	server.setupRouter()
 	return server
@@ -78,14 +81,21 @@ func (s *Server) setupRouter() {
 	})
 
 	// JWT管理器
-	jwt := utils.NewJWTManager(s.cfg.JWT.Secret, s.cfg.JWT.Expiry)
+	jwt := utils.NewJWTManager(
+		s.cfg.JWT.Secret,
+		time.Duration(s.cfg.JWT.AccessExpiry)*time.Minute,
+		time.Duration(s.cfg.JWT.RefreshExpiry)*time.Hour,
+	)
 
 	// 处理器
-	authHandler := handlers.NewAuthHandler(s.db, jwt)
-	postHandler := handlers.NewPostHandler(s.db)
-	documentHandler := handlers.NewDocumentHandler(s.db)
+	authHandler := handlers.NewAuthHandler(s.db, jwt, s.cache)
+	postHandler := handlers.NewPostHandler(s.db, s.cache)
+	documentHandler := handlers.NewDocumentHandler(s.db, s.cache)
 	tagHandler := handlers.NewTagHandler(s.db)
 	taskHandler := handlers.NewTaskHandler(s.db)
+
+	// jwtAuth 中间件（带 Redis 双重校验）
+	jwtAuth := middleware.JWTAuth(jwt, s.cache)
 
 	// API路由组 - 注意这里使用 /api 而不是 /api/v1 以匹配前端配置
 	api := router.Group("/api")
@@ -95,11 +105,13 @@ func (s *Server) setupRouter() {
 		{
 			auth.POST("/register", authHandler.Register)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/refresh", authHandler.Refresh) // 用 refresh token 换发新 access token
+			auth.POST("/logout", authHandler.Logout)    // 退出并吊销 access + refresh token（不挂中间件，AT 过期也能登出）
 		}
 
 		// 用户相关（需要认证）
 		users := api.Group("/users")
-		users.Use(middleware.JWTAuth(jwt))
+		users.Use(jwtAuth)
 		{
 			users.GET("/profile", authHandler.GetProfile)
 		}
@@ -109,7 +121,8 @@ func (s *Server) setupRouter() {
 		{
 			posts.GET("", postHandler.ListPosts)
 			posts.GET("/:id", postHandler.GetPost)
-			posts.POST("/:id/like", middleware.JWTAuth(jwt), postHandler.LikePost)
+			posts.POST("/:id/like", jwtAuth, postHandler.LikePost)
+			posts.DELETE("/:id/like", jwtAuth, postHandler.UnlikePost) // 取消点赞
 		}
 	}
 
@@ -118,7 +131,7 @@ func (s *Server) setupRouter() {
 
 	// 文档相关路由（带路径的路由放在 /:id 之前）
 	documents := api.Group("/documents")
-	documents.Use(middleware.JWTAuth(jwt))
+	documents.Use(jwtAuth)
 	{
 		documents.POST("/upload", documentHandler.UploadDocument)
 		documents.POST("/upload-image", documentHandler.UploadImage)
@@ -136,7 +149,7 @@ func (s *Server) setupRouter() {
 
 	// 标签相关路由
 	tags := api.Group("/tags")
-	tags.Use(middleware.JWTAuth(jwt))
+	tags.Use(jwtAuth)
 	{
 		tags.GET("", tagHandler.GetTags)
 		tags.POST("", tagHandler.CreateTag)
@@ -146,7 +159,7 @@ func (s *Server) setupRouter() {
 
 	// 任务相关路由
 	tasks := api.Group("/tasks")
-	tasks.Use(middleware.JWTAuth(jwt))
+	tasks.Use(jwtAuth)
 	{
 		tasks.GET("", taskHandler.GetTasks)
 		tasks.POST("", taskHandler.CreateTask)

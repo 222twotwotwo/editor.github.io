@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mysql *)",
+      "Bash(taskkill //F //IM main.exe //T)"
+    ]
+  }
+}

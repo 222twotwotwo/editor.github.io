@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"markdown-editor-backend/internal/cache"
 	"markdown-editor-backend/internal/models"
 	"markdown-editor-backend/pkg/api"
 	"net/http"
@@ -19,11 +20,12 @@ const uploadDir = "uploads"
 const imagesSubdir = "images"
 
 type DocumentHandler struct {
-	db *sql.DB
+	db    *sql.DB
+	cache *cache.Cache
 }
 
-func NewDocumentHandler(db *sql.DB) *DocumentHandler {
-	return &DocumentHandler{db: db}
+func NewDocumentHandler(db *sql.DB, c *cache.Cache) *DocumentHandler {
+	return &DocumentHandler{db: db, cache: c}
 }
 
 func (h *DocumentHandler) getUserID(c *gin.Context) (int64, bool) {
@@ -79,6 +81,7 @@ func (h *DocumentHandler) UploadDocument(c *gin.Context) {
 	}
 
 	id, _ := result.LastInsertId()
+	h.cache.InvalidatePosts(c.Request.Context(), id)
 	api.Success(c, gin.H{
 		"id":         id,
 		"title":      title,
@@ -160,6 +163,7 @@ func (h *DocumentHandler) UploadImage(c *gin.Context) {
 	}
 
 	id, _ := result.LastInsertId()
+	h.cache.InvalidatePosts(c.Request.Context(), id)
 	api.Success(c, gin.H{
 		"id":      id,
 		"url":     urlPath,
@@ -284,6 +288,7 @@ func (h *DocumentHandler) UpdateDocument(c *gin.Context) {
 		return
 	}
 
+	h.cache.InvalidatePosts(c.Request.Context(), id)
 	api.Success(c, gin.H{
 		"id":        id,
 		"title":     title,
@@ -325,6 +330,7 @@ func (h *DocumentHandler) DeleteDocument(c *gin.Context) {
 		return
 	}
 
+	h.cache.InvalidatePosts(c.Request.Context(), id)
 	api.Success(c, gin.H{"message": "删除成功"})
 }
 

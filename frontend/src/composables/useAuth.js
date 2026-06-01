@@ -12,12 +12,13 @@ export function useAuth() {
   // 初始化恢复用户状态由 App.vue 的 onMounted 中调用 fetchProfile 完成，此处不再使用 onMounted，
   // 否则在路由守卫等非组件上下文中调用 useAuth() 时会触发 "no active component instance" 警告。
 
-  const setAuth = (newToken, userData) => {
-    token.value = newToken
+  const setAuth = (accessToken, refreshToken, userData) => {
+    token.value = accessToken
     user.value = userData
-    localStorage.setItem('token', newToken)
+    localStorage.setItem('token', accessToken)
+    localStorage.setItem('refresh_token', refreshToken)
     localStorage.setItem('user', JSON.stringify(userData))
-    
+
     // 如果用户选择记住密码，设置更长的存储时间
     if (window.location.href.includes('remember=true')) {
       localStorage.setItem('remember', 'true')
@@ -28,6 +29,7 @@ export function useAuth() {
     token.value = null
     user.value = null
     localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
     localStorage.removeItem('remember')
   }
@@ -42,10 +44,10 @@ export function useAuth() {
         password
       })
       
-      // 后端返回格式：{ success: true, data: { token: "...", user: {...} } }
+      // 后端返回格式：{ success: true, data: { access_token, refresh_token, user } }
       if (response.success && response.data) {
-        const { token, user } = response.data
-        setAuth(token, user)
+        const { access_token, refresh_token, user } = response.data
+        setAuth(access_token, refresh_token, user)
         return { success: true, data: response.data }
       } else {
         error.value = response.error || '注册失败'
@@ -70,9 +72,9 @@ export function useAuth() {
       
       // 根据后端实际返回的数据结构调整
       if (response.success && response.data) {
-        const { token, user } = response.data
-        setAuth(token, user)
-        
+        const { access_token, refresh_token, user } = response.data
+        setAuth(access_token, refresh_token, user)
+
         // 处理记住密码
         if (remember) {
           localStorage.setItem('rememberedUser', JSON.stringify({ username }))
@@ -93,8 +95,8 @@ export function useAuth() {
     }
   }
 
-  const logout = () => {
-    authAPI.logout()
+  const logout = async () => {
+    await authAPI.logout()
     clearAuth()
   }
 

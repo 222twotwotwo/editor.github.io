@@ -10,6 +10,13 @@ type Config struct {
 	Database DatabaseConfig
 	JWT      JWTConfig
 	CORS     CORSConfig
+	Redis    RedisConfig
+}
+
+type RedisConfig struct {
+	Addr     string // 空字符串表示禁用缓存
+	Password string
+	DB       int
 }
 
 type ServerConfig struct {
@@ -31,8 +38,9 @@ type DatabaseConfig struct {
 }
 
 type JWTConfig struct {
-	Secret string
-	Expiry int // 小时
+	Secret        string
+	AccessExpiry  int // access token 有效期（分钟）
+	RefreshExpiry int // refresh token 有效期（小时）
 }
 
 func Load() *Config {
@@ -49,11 +57,17 @@ func Load() *Config {
 			DBName:   getEnv("DB_NAME", "markdown_editor"),
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-			Expiry: getEnvAsInt("JWT_EXPIRY", 24),
+			Secret:        getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			AccessExpiry:  getEnvAsInt("JWT_ACCESS_EXPIRY", 15),
+			RefreshExpiry: getEnvAsInt("JWT_REFRESH_EXPIRY", 168),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", ""),
+		},
+		Redis: RedisConfig{
+			Addr:     getEnv("REDIS_ADDR", ""),
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 	}
 }

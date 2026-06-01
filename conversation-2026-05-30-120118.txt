@@ -1,0 +1,2300 @@
+ ▐▛███▜▌   Claude Code v2.1.156
+▝▜█████▛▘  Opus 4.8 · API Usage Billing
+  ▘▘ ▝▝    ~\Desktop\alone
+
+   Opus 4.8 is here! Now defaults to high effort · /effort xhigh for your hardest tasks
+
+❯ 当前使用递增版本号来删除缓存，这种方法可能会导致雪崩，请你优化，使用延迟双删  
+  的方式                                                                        
+
+  Thought for 11s (ctrl+o to expand)
+
+● I'll explore the caching implementation to understand the current versioning
+  approach before optimizing it.
+
+  Thought for 19s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now let me see how the version-based cache is used in the handlers.
+
+  Thought for 5s, searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Now let me check the document handler's cache usage.
+
+  Thought for 9m 4s, read 1 file (ctrl+o to expand)
+
+● Let me check exactly where the version functions are used and look at related
+  context before designing the change.
+
+  Thought for 9s, searched for 2 patterns (ctrl+o to expand)
+
+● Let me confirm the go-redis version and skim the load-test notes for context
+  on the avalanche concern.
+
+● Bash(cd /c/Users/ghs/Desktop/alone/backend && grep -i "redis" go.mod; echo
+      "--- qps.md (head) ---"; head -60 /c/Users/ghs/Desktop/alone/qps.md
+      2>/dev/null)
+  ⎿     github.com/redis/go-redis/v9 v9.19.0 // indirect
+     --- qps.md (head) ---
+     # QPS 压测报告
+     … +59 lines (ctrl+o to expand)
+
+  Thought for 10m 0s (ctrl+o to expand)
+
+● I have enough context. Let me confirm fmt usage in post_handler.go (I'll be
+  replacing its two fmt.Sprintf cache-key calls) so I don't orphan the import.
+
+  Thought for 27s, searched for 1 pattern (ctrl+o to expand)
+
+● I now have a full picture. Here's my analysis and plan.
+
+  Why the current approach risks avalanche
+
+  Every write calls INCR posts:ver, which changes the version embedded in every
+  cache key at once. So a single like/upload/edit makes the entire posts
+  namespace unreachable simultaneously — every list page and every post detail.
+  All subsequent reads miss together and stampede MySQL. Orphaned old-version
+  keys also linger until TTL.
+
+  Plan (延迟双删 + precise invalidation)
+
+  1. cache/redis.go — remove IncrVersion/GetVersion; add version-free key
+  builders, Del, SCAN-based delByPrefix, and InvalidatePosts (delete now → delay
+  → delete again, second delete on a background context).
+  2. post_handler.go — drop the version from read keys; replace the two
+  IncrVersion calls with InvalidatePosts(ctx, docID).
+  3. document_handler.go — replace the four IncrVersion calls with
+  InvalidatePosts(ctx, id).
+  4. Verify → go build ./....
+
+  Key improvement: detail invalidation becomes precise — a like on post A clears
+  only post:A, not every post's detail (the main avalanche source). The delayed
+  second delete clears any stale value a concurrent read repopulates during the
+  write window.
+
+  Let me implement, starting with the cache layer.
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Added 3 lines, removed 1 line
+       1  // Package cache 提供基于 Redis 的简单读缓存。
+       2  // 设计要点：
+       3  //  1. Redis 不可用时所有方法都安全降级（不返回错误，不影响主流
+          程）。
+       4 -//  2. 用全局版本号让旧 key 自然失效——写入侧只需 BumpVersion， 
+         -无需精确删除。                                                 
+       4 +//  2. 写入侧用「延迟双删」精确失效缓存：更新 DB 后立即删一次、
+         +短延迟后再删一次，                                             
+       5 +//     既避免并发读把旧值回填导致的脏缓存，也不像全局版本号那样
+         +一次性作废整个命名空间。                                       
+       6  package cache
+       7  
+       8  import (
+       9    "context"
+      10 +  "fmt"                                                        
+      11    "log"
+      12    "strconv"
+      13    "time"
+
+● Now replace the version-number methods with the delayed-double-delete
+  machinery:
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Added 71 lines, removed 17 lines
+       72    }
+       73  }
+       74  
+       75 -// IncrVersion 让指定命名空间的版本号 +1，使所有带旧版本号的 k
+          -ey 失效。                                                     
+       76 -// 返回新版本号；失败时返回 0（视为初始版本，调用方仍可正常拼 
+          -key）。                                                       
+       77 -func (c *Cache) IncrVersion(ctx context.Context, nsKey string)
+          - int64 {                                                      
+       78 -  if c == nil {                                               
+       79 -    return 0                                                  
+       75 +// Del 删除指定的一个或多个精确 key；失败仅记日志，不影响主流 
+          +程。                                                          
+       76 +func (c *Cache) Del(ctx context.Context, keys ...string) {    
+       77 +  if c == nil || len(keys) == 0 {                             
+       78 +    return                                                    
+       79    }
+       81 -  v, err := c.rdb.Incr(ctx, nsKey).Result()                   
+       82 -  if err != nil {                                             
+       83 -    log.Printf("缓存 INCR 失败 key=%s: %v", nsKey, err)       
+       84 -    return 0                                                  
+       80 +  if err := c.rdb.Del(ctx, keys...).Err(); err != nil {       
+       81 +    log.Printf("缓存删除失败 keys=%v: %v", keys, err)         
+       82    }
+       86 -  return v                                                    
+       83  }
+       84  
+       89 -// GetVersion 读当前版本号；不存在或出错返回 0。              
+       90 -func (c *Cache) GetVersion(ctx context.Context, nsKey string) 
+          -int64 {                                                       
+       85 +// delByPrefix 用 SCAN 游标遍历并删除所有以 prefix 开头的 key 
+          +。                                                            
+       86 +// 用 SCAN 而非 KEYS，避免在大 key 空间下阻塞 Redis。         
+       87 +func (c *Cache) delByPrefix(ctx context.Context, prefix string
+          +) {                                                           
+       88    if c == nil {
+       92 -    return 0                                                  
+       89 +    return                                                    
+       90    }
+       94 -  v, err := c.rdb.Get(ctx, nsKey).Int64()                     
+       95 -  if err != nil {                                             
+       96 -    return 0                                                  
+       91 +  var cursor uint64                                           
+       92 +  for {                                                       
+       93 +    keys, next, err := c.rdb.Scan(ctx, cursor, prefix+"*", 100
+          +).Result()                                                    
+       94 +    if err != nil {                                           
+       95 +      log.Printf("缓存 SCAN 失败 prefix=%s: %v", prefix, err) 
+       96 +      return                                                  
+       97 +    }                                                         
+       98 +    c.Del(ctx, keys...)                                       
+       99 +    if cursor = next; cursor == 0 {                           
+      100 +      return                                                  
+      101 +    }                                                         
+      102    }
+       98 -  return v                                                    
+      103  }
+      104  
+      105 +// ── 贴文缓存 ───────────────────────────────────────────────
+          +───────────────────                                           
+      106 +// 列表分页 key：posts:list:p{page}:l{limit}                  
+      107 +// 详情     key：post:{docID}                                 
+      108 +// 失效策略：延迟双删（见 InvalidatePosts）。                 
+      109 +                                                              
+      110 +const (                                                       
+      111 +  postsListPrefix  = "posts:list:"                            
+      112 +  postDetailPrefix = "post:"                                  
+      113 +                                                              
+      114 +  // invalidationDelay 是延迟双删第二次删除前的等待时间。     
+      115 +  // 取值需略大于一次「读 DB → 写缓存」的耗时，以覆盖并发读回 
+          +填旧值的窗口。                                                
+      116 +  invalidationDelay = 500 * time.Millisecond                  
+      117 +)                                                             
+      118 +                                                              
+      119 +// PostsListKey 拼贴文列表分页缓存 key。                      
+      120 +func PostsListKey(page, limit int) string {                   
+      121 +  return fmt.Sprintf("%sp%d:l%d", postsListPrefix, page, limit
+          +)                                                             
+      122 +}                                                             
+      123 +                                                              
+      124 +// PostDetailKey 拼贴文详情缓存 key。                         
+      125 +func PostDetailKey(docID int64) string {                      
+      126 +  return postDetailPrefix + strconv.FormatInt(docID, 10)      
+      127 +}                                                             
+      128 +                                                              
+      129 +// delPosts 删除列表全部分页缓存；docID>0 时一并删除该贴文详情
+          +缓存。                                                        
+      130 +func (c *Cache) delPosts(ctx context.Context, docID int64) {  
+      131 +  c.delByPrefix(ctx, postsListPrefix)                         
+      132 +  if docID > 0 {                                              
+      133 +    c.Del(ctx, PostDetailKey(docID))                          
+      134 +  }                                                           
+      135 +}                                                             
+      136 +                                                              
+      137 +// InvalidatePosts 以「延迟双删」失效贴文缓存，调用方应在更新 
+          +DB 后调用：                                                   
+      138 +//  1. 立即删除一次（同步）。                                 
+      139 +//  2. 延迟 invalidationDelay 后再删一次，清掉并发读可能回填的
+          +旧值。                                                        
+      140 +//                                                            
+      141 +// 第二次删除在独立 context 中执行——请求 context 在响应返回后 
+          +即被取消，                                                    
+      142 +// 不能用于延迟任务。nil 接收者安全（no-op）。                
+      143 +func (c *Cache) InvalidatePosts(ctx context.Context, docID int
+          +64) {                                                         
+      144 +  if c == nil {                                               
+      145 +    return                                                    
+      146 +  }                                                           
+      147 +  c.delPosts(ctx, docID) // 第一次删除                        
+      148 +  time.AfterFunc(invalidationDelay, func() {                  
+      149 +    bg, cancel := context.WithTimeout(context.Background(), 2*
+          +time.Second)                                                  
+      150 +    defer cancel()                                            
+      151 +    c.delPosts(bg, docID) // 第二次删除（延迟）               
+      152 +  })                                                          
+      153 +}                                                             
+      154 +                                                              
+      155  // ── Token 白名单 ───────────────────────────────────────────
+           ───────────────────
+      156  // key 格式：jwt:active:{jti}
+      157  // value：任意非空字符串（用 "1" 即可），TTL = token 剩余有效
+           期。
+
+  Thought for 10s (ctrl+o to expand)
+
+● Now post_handler.go — the const block and imports first:
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 2 lines, removed 5 lines
+      16    "markdown-editor-backend/pkg/api"
+      17  )
+      18  
+      19 -// 缓存命名空间与 TTL                                          
+      20 -const (                                                        
+      21 -  postsVersionKey = "posts:ver"                                
+      22 -  postsCacheTTL   = 60 * time.Second                           
+      23 -)                                                              
+      19 +// postsCacheTTL 是贴文列表/详情缓存的存活时间。               
+      20 +const postsCacheTTL = 60 * time.Second                         
+      21  
+      22  // imgRe 解析 Markdown 中第一张图片 URL（![alt](url)）。
+      23  // 包级 var 避免每次调用重新编译。
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Removed 1 line
+      3  import (
+      4    "database/sql"
+      5    "encoding/json"
+      6 -  "fmt"                                                         
+      6    "net/http"
+      7    "regexp"
+      8    "strconv"
+  ⎿  Found 4 new diagnostic issues in 1 file (ctrl+o to expand)
+
+  Thought for 8s (ctrl+o to expand)
+
+● Now the read paths in post_handler.go — ListPosts:
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 2 lines, removed 3 lines
+      51    }
+      52    offset := (page - 1) * limit
+      53  
+      54 -  // 缓存查询：以全局版本号为 key 前缀，写入时 INCR 让旧 key 自
+         -动作废                                                         
+      55 -  ver := h.cache.GetVersion(c.Request.Context(), postsVersionKe
+         -y)                                                             
+      56 -  cacheKey := fmt.Sprintf("posts:list:v%d:p%d:l%d", ver, page, 
+         -limit)                                                         
+      54 +  // 缓存查询：命中直接返回；写入侧用延迟双删失效，无需在 key  
+         +中编版本号                                                     
+      55 +  cacheKey := cache.PostsListKey(page, limit)                  
+      56    if cached, ok := h.cache.Get(c.Request.Context(), cacheKey); 
+          ok {
+      57      c.Data(http.StatusOK, "application/json; charset=utf-8", ca
+          ched)
+      58      return
+  ⎿  Found 7 new diagnostic issues in 1 file (ctrl+o to expand)
+
+  Thought for 6s (ctrl+o to expand)
+
+● GetPost:
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 1 line, removed 2 lines
+      119      return
+      120    }
+      121  
+      122 -  ver := h.cache.GetVersion(c.Request.Context(), postsVersionK
+          -ey)                                                           
+      123 -  cacheKey := fmt.Sprintf("post:v%d:%d", ver, id)             
+      122 +  cacheKey := cache.PostDetailKey(id)                         
+      123    if cached, ok := h.cache.Get(c.Request.Context(), cacheKey);
+            ok {
+      124      c.Data(http.StatusOK, "application/json; charset=utf-8", c
+           ached)
+      125      return
+  ⎿  Found 4 new diagnostic issues in 1 file (ctrl+o to expand)
+  Thought for 13s (ctrl+o to expand)
+
+● LikePost and UnlikePost (both identical IncrVersion lines, same docID in
+  scope):
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 2 lines, removed 2 lines
+      213    // 新点赞：原子计数写 Redis，同时持久化到 MySQL
+      214    h.cache.IncrLike(c.Request.Context(), docID)
+      215    h.db.Exec("UPDATE documents SET likes_count = likes_count + 
+           1 WHERE id = ?", docID)
+      216 -  h.cache.IncrVersion(c.Request.Context(), postsVersionKey)   
+      216 +  h.cache.InvalidatePosts(c.Request.Context(), docID)         
+      217  
+      218    current := base + 1 + int(h.cache.GetLikeDelta(c.Request.Con
+           text(), docID)) - 1
+      219    // base+1 是本次点赞后的 MySQL 值，GetLikeDelta 是其他并发还
+           未回写的增量（减去本次已算入的 1）
+     ...
+      255    // 原子减计数，持久化，失效缓存
+      256    h.cache.DecrLike(c.Request.Context(), docID)
+      257    h.db.Exec("UPDATE documents SET likes_count = GREATEST(likes
+           _count - 1, 0) WHERE id = ?", docID)
+      258 -  h.cache.IncrVersion(c.Request.Context(), postsVersionKey)   
+      258 +  h.cache.InvalidatePosts(c.Request.Context(), docID)         
+      259  
+      260    var current int
+      261    _ = h.db.QueryRow("SELECT likes_count FROM documents WHERE i
+           d = ?", docID).Scan(&current)
+
+  Thought for 9s (ctrl+o to expand)
+
+● Now document_handler.go — all four IncrVersion calls (each has id in scope):
+
+● Update(backend\internal\handlers\document_handler.go)
+  ⎿  Added 4 lines, removed 4 lines
+      81    }
+      82  
+      83    id, _ := result.LastInsertId()
+      84 -  h.cache.IncrVersion(c.Request.Context(), "posts:ver")        
+      84 +  h.cache.InvalidatePosts(c.Request.Context(), id)             
+      85    api.Success(c, gin.H{
+      86      "id":         id,
+      87      "title":      title,
+     ...
+      163    }
+      164  
+      165    id, _ := result.LastInsertId()
+      166 -  h.cache.IncrVersion(c.Request.Context(), "posts:ver")       
+      166 +  h.cache.InvalidatePosts(c.Request.Context(), id)            
+      167    api.Success(c, gin.H{
+      168      "id":      id,
+      169      "url":     urlPath,
+     ...
+      288      return
+      289    }
+      290  
+      291 -  h.cache.IncrVersion(c.Request.Context(), "posts:ver")       
+      291 +  h.cache.InvalidatePosts(c.Request.Context(), id)            
+      292    api.Success(c, gin.H{
+      293      "id":        id,
+      294      "title":     title,
+     ...
+      330      return
+      331    }
+      332  
+      333 -  h.cache.IncrVersion(c.Request.Context(), "posts:ver")       
+      333 +  h.cache.InvalidatePosts(c.Request.Context(), id)            
+      334    api.Success(c, gin.H{"message": "删除成功"})
+      335  }
+      336  
+
+  Thought for 10s (ctrl+o to expand)
+
+● All edits applied with no remaining diagnostics. Let me verify the build and
+  vet:
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./internal/cache/
+      ./internal/handlers/ 2>&1 && echo "VET OK")
+  ⎿  BUILD OK
+     VET OK
+
+  Thought for 53s (ctrl+o to expand)
+
+● Build and vet both pass. Here's a summary of the change.
+
+  What changed
+
+  Replaced the global version-number invalidation with 延迟双删 (delayed double 
+  delete) + precise key deletion.
+
+  backend/internal/cache/redis.go
+  - Removed IncrVersion / GetVersion.
+  - Added version-free key builders PostsListKey(page, limit) →
+  posts:list:p{page}:l{limit} and PostDetailKey(docID) → post:{docID}.
+  - Added Del(keys...), a SCAN-based delByPrefix (avoids KEYS blocking), and the
+  orchestrator:
+
+  func (c *Cache) InvalidatePosts(ctx context.Context, docID int64) {
+        if c == nil { return }
+        c.delPosts(ctx, docID)                    // 1st delete (sync)
+        time.AfterFunc(invalidationDelay, func() { // 2nd delete (delayed, 500ms
+                bg, cancel := context.WithTimeout(context.Background(), 2*time.S
+                defer cancel()
+                c.delPosts(bg, docID)
+        })
+  }
+
+  post_handler.go / document_handler.go — read paths drop the v%d version
+  segment; all six write paths replace IncrVersion(...) with
+  InvalidatePosts(ctx, docID).
+
+  Why this addresses the avalanche
+
+
+
+  ┌──────────────────┬──────────────────────────┬───────────────────────────┐
+  │                  │  Before (version INCR)   │     After (延迟双删)      │
+  ├──────────────────┼──────────────────────────┼───────────────────────────┤
+  │                  │ Entire namespace — every │ List pages + only the one │
+  │ Blast radius of  │  list page and every     │  changed detail           │
+  │ one write        │ post detail unreachable  │ (post:{id})               │
+  │                  │ at once                  │                           │
+  ├──────────────────┼──────────────────────────┼───────────────────────────┤
+  │ A like on post   │ Invalidated cached       │ Clears post:3 only; other │
+  │ #3               │ details of #1…#N → mass  │  details stay warm        │
+  │                  │ miss → DB stampede       │                           │
+  ├──────────────────┼──────────────────────────┼───────────────────────────┤
+  │                  │                          │ Second delete clears any  │
+  │ Stale-on-write   │ —                        │ value a concurrent read   │
+  │ race             │                          │ repopulated during the    │
+  │                  │                          │ write window              │
+  └──────────────────┴──────────────────────────┴───────────────────────────┘
+
+  Two correctness details I want to flag:
+  - The second delete runs on context.Background(), not the request context —
+  the request context is already cancelled once the response returns, so reusing
+  it would make the delayed delete silently fail.
+  - The first delete is synchronous (before the response), so the caller's next
+  read is immediately fresh; the delayed one is the consistency backstop.
+
+  Verified
+
+  go build ./... and go vet ./internal/cache ./internal/handlers both pass.
+  There's no test/Redis harness in the project, so I verified at the compiler
+  level; to confirm at runtime, like a post and check that only that post's
+  post:{id} key disappears from Redis while other details stay cached.
+
+  One thing I deliberately did not add
+
+  The list cache is still fully cleared on any write (unavoidable with offset
+  pagination — any insert/delete reorders rows across pages). Those few list
+  keys repopulate together and thus expire together ~60s later. If you want to
+  also kill that residual synchronized-expiry effect, the standard add-on is
+  randomized TTL jitter (e.g. 60s ± 10%) on the Set call. I left it out to keep
+  this change focused on the delayed-double-delete you asked for — say the word
+  and I'll add the jitter.
+
+✻ Cogitated for 27m 8s
+
+❯ 你是如何实现延迟双删的                                                        
+
+  Thought for 1m 23s (ctrl+o to expand)
+
+● Let me re-read the exact code I wrote so my explanation matches it precisely.
+
+  Thought for 59s, read 1 file (ctrl+o to expand)
+
+● 延迟双删的实现
+
+  核心是 cache/redis.go 里的 InvalidatePosts，配合各 handler 在更新完 DB 
+  后调用它。整体时序是：更新 DB → 立即删缓存 → 延迟 500ms → 再删一次。
+
+  1. 入口方法 InvalidatePosts（redis.go:143）
+
+  func (c *Cache) InvalidatePosts(ctx context.Context, docID int64) {
+        if c == nil { return }
+        c.delPosts(ctx, docID)                       // ① 第一次删除（同步、立即
+        time.AfterFunc(invalidationDelay, func() {   // ② 延迟 500ms 后触发
+                bg, cancel := context.WithTimeout(context.Background(), 2*time.S
+                defer cancel()
+                c.delPosts(bg, docID)                    // ③ 第二次删除（延迟）
+        })
+  }
+
+  三个关键点：
+
+  - 第一次删除是同步的 —— 在 handler
+  返回响应前就执行完，保证写操作的发起者紧接着的读一定是新值。
+  - 第二次删除用 time.AfterFunc 调度，不阻塞当前请求。它基于 runtime
+  定时器，不是一个 go func(){ sleep } 阻塞的
+  goroutine，所以高并发下也不会堆积阻塞协程。
+  - 第二次删除必须用 context.Background()，不能用请求的 ctx ——
+  这是最容易踩的坑:请求一旦返回,c.Request.Context() 就被 cancel 了,500ms
+  后再用它做删除会直接因 context canceled 失败。所以这里新建了一个带 2s
+  超时的独立 context。
+
+  2. "删什么"——delPosts（redis.go:130）
+
+  func (c *Cache) delPosts(ctx context.Context, docID int64) {
+        c.delByPrefix(ctx, postsListPrefix)   // posts:list:*  —— 列表所有分页
+        if docID > 0 {
+                c.Del(ctx, PostDetailKey(docID))  // post:{docID}  —— 该贴文详情
+        }
+  }
+
+  - 列表用 delByPrefix 走 SCAN 游标按 posts:list: 前缀删（offset
+  分页下任何增删都会让行跨页移动,所以整组列表页都得清）。用 SCAN 不用
+  KEYS,避免阻塞 Redis。
+  - 详情是精确删 post:{docID} 这一个 key ——
+  这正是相比旧版本号方案的关键改进:点赞 #3 只清 post:3,不波及其它贴文详情。
+
+  3. 它解决的竞态(为什么需要"第二次")
+
+  只删一次扛不住"并发读把旧值回填"的竞态。以给 post #3 点赞为例:
+
+  T1  读请求R：缓存 miss，开始 SELECT（此刻 likes=10）
+  T2  写请求W：UPDATE likes=11 并提交
+  T3  写请求W：第一次删除缓存          ← 缓存此刻是干净的
+  T4  读请求R：把 T1 读到的旧值 likes=10 写回缓存   ← 脏数据出现！
+  T5  写请求W：第二次删除(=T3+500ms)   ← 清掉脏值
+  之后 读 → miss → 读 DB → likes=11    ✓ 最终一致
+
+  第二次删除就是为了兜底 T4 这个"删完之后又被回填"的窗口。
+
+  4. 延迟值的取舍(redis.go:114）
+
+  invalidationDelay = 500 * time.Millisecond
+
+  它必须略大于一次"读 DB → 
+  写缓存"的耗时:只要读请求的回填发生在第二次删除之前,脏值就能被清掉。这是延迟双
+  删固有的权衡——延迟太短覆盖不住慢请求,太长则脏值存活窗口变大。另外还有 60s TTL
+  作为最终兜底。
+
+  ---
+  一点如实说明:课本式延迟双删的顺序是 删 → 更新DB → 延迟 → 
+  删(更新前先删一次)。我这里是 更新DB → 删 → 延迟 → 
+  删(更新后删两次)。上一轮我分析过,在有"延迟第二次删除"兜底的前提下,两者对上面那
+  个竞态的最终一致性保证是等价的,而"更新后双删"对现有 handler
+  的改动最小(每处只替换原来的 IncrVersion 一行),所以选了这个变体。如果你更想要严
+  格的课本顺序(更新前再加一次删除),我可以补上。
+
+
+
+
+
+✻ Brewed for 2m 44s
+
+❯ 当前能否保证缓存一致性，是否有更优的方案                                      
+
+  Thought for 1m 43s (ctrl+o to expand)
+
+● 先给结论,再讲方案。
+
+  一、当前能否保证一致性?
+
+  不能保证强一致,它保证的是"有上界的最终一致"——上界就是 TTL(60s)。
+  延迟双删本质是"尽力而为 + 兜底",不是证明。下面三个场景会出现脏数据:
+
+  场景 1:延迟时间赌输了(尾部风险)
+
+  T1 读R：缓存miss，SELECT 到旧值 V0（此刻写还没提交）
+  T2 写W：提交 V1
+  T3 写W：第一次删除
+  T3+500ms 写W：第二次删除
+  T4 读R：因 GC/调度停顿，现在才把 V0 写回缓存（T4 > T3+500ms）  ← 漏网
+  只要某个读请求"SELECT → 写缓存"之间停顿超过 500ms,脏值就会越过两次删除,存活到
+  TTL 才自愈。500ms 是经验值,不是保证。
+
+  场景 2:第二次删除丢了
+  time.AfterFunc 在独立 goroutine 里跑。进程在这 500ms 内崩溃/重启、或那一刻
+  Redis 抖动,第二次删除就没了。同样退化到 TTL 兜底。
+
+  场景 3:DB 与缓存非原子
+  更新 DB 和删缓存是两个系统,没有跨二者的事务。写请求"提交 DB 成功 →
+  还没来得及删缓存就崩了",缓存里的旧值也会留到 TTL。
+
+  ▎ 一句话:常态下 0~500ms 内一致,极端情况下最坏脏 60s(TTL),不会永久脏。
+
+  二、对本项目意味着什么
+
+  帖子列表、点赞数这类数据,最终一致完全够用——它不是账户余额。强一致方案的复杂度
+  对一个 Markdown 编辑器的社区流是不成比例的。所以我的整体判断是:当前方案方向正
+  确,只需做几处低成本加固,不建议上重型基建。
+
+  三、更优方案(按"本项目性价比"排序)
+
+  ✅ 推荐:低成本、贴合当前规模
+
+  1. singleflight 防击穿(最值得加)
+  现在缓存一失效,并发读会同时 miss 并一起砸 DB 重建同一个
+  key——这正是你一直关心的"惊群/雪崩"的另一面。用 golang.org/x/sync/singleflight
+  把"同一 key 的并发重建"合并成一次 DB
+  查询,其余请求等结果。纯进程内、零额外基建、十几行代码。
+
+  2. TTL 随机抖动
+  列表被整组清掉后会同时重建、又同时到期(60s 后)形成新的小雪崩。把 60s 改成 60s 
+  ± 10% 即可打散。一行的事。
+
+  3. 把易变的 likes_count 从缓存体里剥离(最有针对性)
+  关键观察:列表按 updated_at DESC 排序,点赞不改 updated_at,根本不影响列表顺序,只
+  改一个显示数字。但现在每次点赞都把整组列表缓存清掉,很浪费。
+  更优做法:缓存的 body 里不存 likes_count,读时用项目里已有的 likes:delta
+  计数器(IncrLike/GetLikeDelta)+ MySQL 基准值在内存里叠加。这样点赞不再失效任何
+  列表/详情缓存——而点赞通常是最高频的写。代价是要把"渲染好的 JSON
+  blob"改成"结构体 + 读时拼装",算一次中等重构。
+
+  ⚠️ 更强一致,但对当前规模偏重(我不推荐现在做)
+
+  4. 消息队列做"可靠第二次删除":把第二次删除投递到延迟队列,消费者带重试,解决场景
+  2 的丢删。——多引入一套 MQ,收益对本项目不值。
+
+  5. binlog 订阅(Canal/Debezium)驱动失效:订阅 MySQL
+  binlog,以"已提交的变更"为准去删缓存,彻底解决场景 3 的双写不一致,且天然可重试。
+  这是大型系统里最稳的做法,但要多跑一个订阅服务。结合你 qps.md 里"单实例、14
+  行数据、~12K QPS 天花板"的现状,属于明显的过度设计。
+
+  强一致的本质
+
+  真要"读必反映最新写",任何异步失效方案都做不到——只能(a)对这块数据不缓存,(b)走串
+  行化的读路径加锁,或(c)缓存+DB
+  两阶段提交(不现实)。所以如果某块数据需要强一致,正确答案往往是"别缓存它 /
+  用极短 TTL",而不是把失效逻辑越堆越复杂。
+
+  四、我的建议
+
+  保持现在的延迟双删,再加 singleflight 防击穿 + TTL 
+  抖动,就是这个项目的甜点位置;如果点赞很频繁,likes_count 
+  读时叠加是收益最大的下一步。MQ / binlog 先不碰。
+
+  要的话我可以先把 singleflight + TTL 抖动 加上(改动小、风险低),likes_count
+  剥离作为可选的后续重构单独做。你倾向哪个?
+
+✻ Worked for 2m 13s
+
+❯ 请使用TTl抖动防止雪崩                                                         
+
+  Thought for 2m 49s (ctrl+o to expand)
+
+● Adding TTL jitter. The plan: a JitterTTL helper in the cache package (generic,
+  no Redis dependency), applied at the two posts Set sites so each key's expiry
+  is spread out instead of all expiring together.
+
+  First, the cache package — import and helper:
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Added 1 line
+       9    "context"
+      10    "fmt"
+      11    "log"
+      12 +  "math/rand"                                                  
+      13    "strconv"
+      14    "time"
+      15  
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Added 11 lines
+      73    }
+      74  }
+      75  
+      76 +// JitterTTL 给基础 TTL 叠加 0~20% 的随机抖动后返回。          
+      77 +// 用途：让一批同时写入的 key 错开过期时间，避免集中失效引发缓 
+         +存雪崩。                                                       
+      78 +// 包级纯函数（不依赖 Redis），调用方应在每次 Set 时单独调用， 
+         +使每个 key 各自抖动。                                          
+      79 +func JitterTTL(base time.Duration) time.Duration {             
+      80 +  if base <= 0 {                                               
+      81 +    return base                                                
+      82 +  }                                                            
+      83 +  // rand 顶层函数自带锁、并发安全；Go 1.20+ 已自动播种，无需手
+         +动 Seed。                                                      
+      84 +  return base + time.Duration(rand.Int63n(int64(base/5)+1))    
+      85 +}                                                              
+      86 +                                                               
+      87  // Del 删除指定的一个或多个精确 key；失败仅记日志，不影响主流程
+          。
+      88  func (c *Cache) Del(ctx context.Context, keys ...string) {
+      89    if c == nil || len(keys) == 0 {
+
+● Now post_handler.go — update the TTL comment and apply jitter at both Set
+  sites:
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 1 line, removed 1 line
+      15    "markdown-editor-backend/pkg/api"
+      16  )
+      17  
+      18 -// postsCacheTTL 是贴文列表/详情缓存的存活时间。               
+      18 +// postsCacheTTL 是贴文列表/详情缓存的基础存活时间（实际写入时 
+         +叠加随机抖动，见 cache.JitterTTL）。                           
+      19  const postsCacheTTL = 60 * time.Second
+      20  
+      21  // imgRe 解析 Markdown 中第一张图片 URL（![alt](url)）。
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 2 lines, removed 2 lines
+      106      },
+      107    }
+      108    body, _ := json.Marshal(resp)
+      109 -  h.cache.Set(c.Request.Context(), cacheKey, body, postsCacheT
+          -TL)                                                           
+      109 +  h.cache.Set(c.Request.Context(), cacheKey, body, cache.Jitte
+          +rTTL(postsCacheTTL))                                          
+      110    c.Data(http.StatusOK, "application/json; charset=utf-8", bod
+           y)
+      111  }
+      112  
+     ...
+      157  
+      158    resp := gin.H{"success": true, "data": p}
+      159    body, _ := json.Marshal(resp)
+      160 -  h.cache.Set(c.Request.Context(), cacheKey, body, postsCacheT
+          -TL)                                                           
+      160 +  h.cache.Set(c.Request.Context(), cacheKey, body, cache.Jitte
+          +rTTL(postsCacheTTL))                                          
+      161    c.Data(http.StatusOK, "application/json; charset=utf-8", bod
+           y)
+      162  }
+      163  
+
+● Build and vet to verify:
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./internal/cache/
+      ./internal/handlers/ 2>&1 && echo "VET OK")
+  ⎿  BUILD OK
+     VET OK
+  Thought for 22s (ctrl+o to expand)
+
+● 完成。TTL 抖动已加上,build 和 vet 都通过。
+
+  改动
+
+  cache/redis.go — 新增 math/rand 引入和一个包级纯函数:
+
+  // JitterTTL 给基础 TTL 叠加 0~20% 的随机抖动后返回。
+  func JitterTTL(base time.Duration) time.Duration {
+        if base <= 0 {
+                return base
+        }
+        return base + time.Duration(rand.Int63n(int64(base/5)+1))
+  }
+
+  post_handler.go — 两处缓存写入(ListPosts、GetPost)都改为:
+
+  h.cache.Set(c.Request.Context(), cacheKey, body,
+  cache.JitterTTL(postsCacheTTL))
+
+  效果
+
+  - 原来一批 key 在失效后会同时重建、又在 60s 
+  后同时过期,形成二次小雪崩。现在每个 key 的存活时间落在 60~72s 区间内,且每次 
+  Set 独立取随机值(所以同一批 key 也各自错开),把集中过期打散到一个 12s 的窗口。
+  - 只增不减:最短仍是 60s,不会缩短缓存有效期。
+
+  几个设计点
+
+  - 抖动放在调用方、不放进通用 Set:Set(key,val,ttl) 作为通用 setter
+  应当精确写入传入的 ttl;抖动是缓存策略,显式调用 cache.JitterTTL(...)
+  更清晰,也不会误伤 token 白名单那种需要精确 TTL 的场景(它走的是
+  SetToken,不受影响)。
+  - 并发安全:rand 顶层函数自带锁,Go 1.20+ 自动播种,无需手动 Seed(项目是 Go
+  1.25)。
+
+  验证
+
+  go build ./... 与 go vet ./internal/cache ./internal/handlers 均通过。项目没有
+  Redis 测试环境,所以止于编译层验证;运行时可连续打几次同一个列表端点,观察 Redis
+  里 posts:list:* 各 key 的 TTL(TTL <key>)是否落在 60~72 且互不相同。
+
+  至此你关心的三件事——失效精度(延迟双删)、雪崩(TTL
+  抖动)都已落地;还差的"击穿"(singleflight 合并并发重建)我没动,需要的话随时叫我。
+
+✻ Crunched for 3m 55s
+
+※ recap: Optimizing the posts cache in this Go backend: replaced version-number invalidation with delayed double-delete, then added TTL jitter to prevent avalanche. Both are done and building. Next action, if you want it: add singleflight to collapse concurrent cache rebuilds. (disable recaps in /config)
+
+❯ 引入access token与refresh token搭配当前项目的jwt与redis双重鉴权实现用户无感刷 
+  新jwt并可以自主吊销jwt的功能                                                  
+
+  Thought for 21s (ctrl+o to expand)
+
+● This is a substantial feature. Let me thoroughly understand the current auth
+  implementation (JWT + Redis whitelist) before designing the access/refresh
+  token system.
+
+  Thought for 9s, read 3 files (ctrl+o to expand)
+
+● Now the server wiring, config, and frontend auth layer:
+
+  Thought for 9s, read 3 files (ctrl+o to expand)
+
+● Now the frontend auth layer — let me find and read the API client and auth
+  composable:
+
+● Bash(cd /c/Users/ghs/Desktop/alone/frontend/src 2>/dev/null && echo "===
+      api.js ===" && find . -name "api.js" && echo "=== auth composables ===" &&
+      find . -iname "*a…)
+  ⎿  === api.js ===
+     ./services/api.js
+     === auth composables ===
+     … +3 lines (ctrl+o to expand)
+
+  Thought for 2m 50s, read 2 files (ctrl+o to expand)
+
+● I've now mapped the full auth flow. Here's what exists today:
+
+  Backend — single JWT (JWT_EXPIRY=24h) carrying user_id/username/jti. On
+  login/register, the jti is whitelisted in Redis (jwt:active:{jti},
+  TTL=expiry). Middleware does the dual check: verify signature → check Redis
+  whitelist. Logout deletes the jti (instant revoke). Redis-down degrades to
+  allow.
+
+  Frontend — token in localStorage, added via Axios request interceptor; on 401
+  it clears auth and redirects to /login.
+
+  To extend this to access + refresh tokens I need to settle a few forking
+  design decisions before writing code — they materially change the middleware,
+  the refresh endpoint, and the frontend. Defaults I'll assume unless you say
+  otherwise: AT ≈ 15 min, RT ≈ 7 days (both via env), and RT stored in 
+  localStorage to match the current app (httpOnly-cookie storage is a larger
+  change — CORS credentials + CSRF — I can do as a follow-up).
+
+● User answered Claude's questions:
+  ⎿  · Access token 如何吊销?当前每个受保护请求都会查 Redis 白名单。引入短期 AT 
+     后,这层是否保留? → 保留白名单(即时)
+     · Refresh token 是否轮换? → 固定 RT
+     · 『自主吊销』的范围? → 仅当前会话
+
+  Thought for 3m 15s (ctrl+o to expand)
+
+● The choices simplify things nicely: static RT, current-session revocation, 
+  keep the AT whitelist. No rotation/families, no per-user versioning. Let me
+  gather the last few implementation details before coding.
+
+  Read 2 files (ctrl+o to expand)
+
+● Bash(cd /c/Users/ghs/Desktop/alone/backend && grep "golang-jwt" go.mod)
+  ⎿     github.com/golang-jwt/jwt/v4 v4.5.2
+
+  Thought for 2m 59s, searched for 1 pattern (ctrl+o to expand)
+
+● Got it — static RT, current-session revocation, keep the AT whitelist. That
+  keeps the design lean: no rotation/families, no per-user versioning. Let me
+  verify a couple of call sites before editing.
+
+  Thought for 3m 21s, searched for 1 pattern (ctrl+o to expand)
+
+● All call sites confirmed. LoginResponse in models/user.go is unused dead code
+  — I'll leave it (pre-existing, not mine to remove).
+
+  Here's the final design I'm implementing:
+
+  Token model — Access JWT (typ:"access", ~15min, whitelisted in
+  jwt:active:{jti}) + Refresh JWT (typ:"refresh", ~7d, whitelisted in
+  jwt:refresh:{jti}). Both go through JWT-signature + Redis-whitelist dual
+  check.
+
+  Silent refresh — middleware tags an expired AT with error code token_expired;
+  the frontend interceptor catches it, calls /api/auth/refresh with the RT to
+  mint a new AT (RT stays the same — static), and replays the original request.
+  Concurrent 401s queue behind one refresh.
+
+  Revocation — /logout deletes the current AT's jti and the RT's jti (sent in
+  body). Frontend logout calls it.
+
+  Let me implement. Starting with the JWT utility and config:
+
+● Write(backend\internal\utils\jwt.go)
+  ⎿  Added 42 lines, removed 14 lines
+       1  package utils
+       2  
+       3  import (
+       4 +  "errors"                                                     
+       5    "time"
+       6  
+       7    "github.com/golang-jwt/jwt/v4"
+       8    "github.com/google/uuid"
+       9  )
+      10  
+      11 +// Token 类型，写入 Claims.Typ，用于区分 access / refresh，防止
+         +二者互相冒用。                                                 
+      12 +const (                                                        
+      13 +  TokenTypeAccess  = "access"                                  
+      14 +  TokenTypeRefresh = "refresh"                                 
+      15 +)                                                              
+      16 +                                                               
+      17 +// ErrTokenExpired 表示 token 签名有效但已过期。               
+      18 +// 中间件据此返回可识别错误码，前端用 refresh token 静默续期。 
+      19 +var ErrTokenExpired = errors.New("token is expired")           
+      20 +                                                               
+      21  type JWTManager struct {
+      11 -  secret     string                                            
+      12 -  expiryTime time.Duration                                     
+      22 +  secret        string                                         
+      23 +  accessExpiry  time.Duration                                  
+      24 +  refreshExpiry time.Duration                                  
+      25  }
+      26  
+      27  type Claims struct {
+      28    UserID   int64  `json:"user_id"`
+      29    Username string `json:"username"`
+      30 +  Typ      string `json:"typ"` // access | refresh             
+      31    jwt.RegisteredClaims
+      32  }
+      33  
+      21 -func NewJWTManager(secret string, expiryHours int) *JWTManager 
+         -{                                                              
+      34 +// NewJWTManager 创建管理器；accessExpiry 为 access token 有效 
+         +期，refreshExpiry 为 refresh token 有效期。                    
+      35 +func NewJWTManager(secret string, accessExpiry, refreshExpiry t
+         +ime.Duration) *JWTManager {                                    
+      36    return &JWTManager{
+      23 -    secret:     secret,                                        
+      24 -    expiryTime: time.Duration(expiryHours) * time.Hour,        
+      37 +    secret:        secret,                                     
+      38 +    accessExpiry:  accessExpiry,                               
+      39 +    refreshExpiry: refreshExpiry,                              
+      40    }
+      41  }
+      42  
+      28 -// GenerateToken 生成带唯一 JTI 的 JWT，同时返回 token 字符串和
+         - jti。                                                         
+      29 -// JTI（jwt_id）用于 Redis 白名单校验，支持精确吊销。          
+      30 -func (m *JWTManager) GenerateToken(userID int64, username strin
+         -g) (token string, jti string, err error) {                     
+      43 +// GenerateAccessToken 签发短期 access token，返回 token 字符串
+         +与 jti（用于 Redis 白名单）。                                  
+      44 +func (m *JWTManager) GenerateAccessToken(userID int64, username
+         + string) (token, jti string, err error) {                      
+      45 +  return m.generate(userID, username, TokenTypeAccess, m.access
+         +Expiry)                                                        
+      46 +}                                                              
+      47 +                                                               
+      48 +// GenerateRefreshToken 签发长期 refresh token。               
+      49 +func (m *JWTManager) GenerateRefreshToken(userID int64, usernam
+         +e string) (token, jti string, err error) {                     
+      50 +  return m.generate(userID, username, TokenTypeRefresh, m.refre
+         +shExpiry)                                                      
+      51 +}                                                              
+      52 +                                                               
+      53 +func (m *JWTManager) generate(userID int64, username, typ strin
+         +g, ttl time.Duration) (token, jti string, err error) {         
+      54    jti = uuid.NewString()
+      55    now := time.Now()
+      56    claims := Claims{
+      57      UserID:   userID,
+      58      Username: username,
+      59 +    Typ:      typ,                                             
+      60      RegisteredClaims: jwt.RegisteredClaims{
+      61        ID:        jti,
+      38 -      ExpiresAt: jwt.NewNumericDate(now.Add(m.expiryTime)),    
+      62 +      ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),             
+      63        IssuedAt:  jwt.NewNumericDate(now),
+      64      },
+      65    }
+     ...
+      68    return
+      69  }
+      70  
+      71 +// VerifyToken 校验签名与有效期；过期时返回 ErrTokenExpired 以 
+         +便上层区分处理。                                               
+      72  func (m *JWTManager) VerifyToken(tokenString string) (*Claims, 
+          error) {
+      73    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, fun
+          c(token *jwt.Token) (interface{}, error) {
+      74      return []byte(m.secret), nil
+      75    })
+      76    if err != nil {
+      77 +    var ve *jwt.ValidationError                                
+      78 +    if errors.As(err, &ve) && ve.Errors&jwt.ValidationErrorExpi
+         +red != 0 {                                                     
+      79 +      return nil, ErrTokenExpired                              
+      80 +    }                                                          
+      81      return nil, err
+      82    }
+      83    if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+      84      return claims, nil
+      85    }
+      57 -  return nil, err                                              
+      86 +  return nil, errors.New("invalid token")                      
+      87  }
+      88  
+      60 -// Expiry 返回配置的 token 有效期，供写 Redis TTL 时使用。     
+      61 -func (m *JWTManager) Expiry() time.Duration {                  
+      62 -  return m.expiryTime                                          
+      63 -}                                                              
+      89 +// AccessExpiry / RefreshExpiry 返回配置的有效期，供写 Redis TT
+         +L 时使用。                                                     
+      90 +func (m *JWTManager) AccessExpiry() time.Duration  { return m.a
+         +ccessExpiry }                                                  
+      91 +func (m *JWTManager) RefreshExpiry() time.Duration { return m.r
+         +efreshExpiry }                                                 
+
+  Thought for 8s (ctrl+o to expand)
+
+● Config — split the single expiry into access/refresh:
+
+● Update(backend\internal\config\config.go)
+  ⎿  Added 3 lines, removed 2 lines
+      38  }
+      39  
+      40  type JWTConfig struct {
+      41 -  Secret string                                                
+      42 -  Expiry int // 小时                                           
+      41 +  Secret        string                                         
+      42 +  AccessExpiry  int // access token 有效期（分钟）             
+      43 +  RefreshExpiry int // refresh token 有效期（小时）            
+      44  }
+      45  
+      46  func Load() *Config {
+  ⎿  Found 9 new diagnostic issues in 4 files (ctrl+o to expand)
+
+  Thought for 13s (ctrl+o to expand)
+
+● Now the config Load block:
+
+● Update(backend\internal\config\config.go)
+  ⎿  Added 3 lines, removed 2 lines
+      57        DBName:   getEnv("DB_NAME", "markdown_editor"),
+      58      },
+      59      JWT: JWTConfig{
+      60 -      Secret: getEnv("JWT_SECRET", "your-secret-key-change-in-p
+         -roduction"),                                                   
+      61 -      Expiry: getEnvAsInt("JWT_EXPIRY", 24),                   
+      60 +      Secret:        getEnv("JWT_SECRET", "your-secret-key-chan
+         +ge-in-production"),                                            
+      61 +      AccessExpiry:  getEnvAsInt("JWT_ACCESS_EXPIRY", 15),     
+      62 +      RefreshExpiry: getEnvAsInt("JWT_REFRESH_EXPIRY", 168),   
+      63      },
+      64      CORS: CORSConfig{
+      65        AllowedOrigins: getEnv("CORS_ALLOWED_ORIGINS", ""),
+
+● Now the cache layer — refactor TokenExists into a shared helper and add the
+  refresh-token whitelist:
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Added 46 lines, removed 7 lines
+      197    }
+      198  }
+      199  
+      200 -// TokenExists 返回 jti 是否在白名单中。                      
+      201 -// Redis 不可用（c == nil 或 Get 出错且非 key-not-found 错误）
+          -时返回 true（放行）。                                         
+      200 +// TokenExists 返回 access token 的 jti 是否在白名单中。      
+      201  func (c *Cache) TokenExists(ctx context.Context, jti string) b
+           ool {
+      202 +  return c.whitelistExists(ctx, tokenKey(jti))                
+      203 +}                                                             
+      204 +                                                              
+      205 +// whitelistExists 查白名单 key 是否存在。                    
+      206 +// Redis 不可用（c == nil 或非 key-not-found 错误）时降级返回 
+          +true（放行），                                                
+      207 +// 避免 Redis 故障导致所有用户被踢出。                        
+      208 +func (c *Cache) whitelistExists(ctx context.Context, key strin
+          +g) bool {                                                     
+      209    if c == nil {
+      204 -    return true // Redis 未配置，降级放行                     
+      210 +    return true                                               
+      211    }
+      206 -  err := c.rdb.Get(ctx, tokenKey(jti)).Err()                  
+      212 +  err := c.rdb.Get(ctx, key).Err()                            
+      213    if err == nil {
+      214      return true // 命中白名单
+      215    }
+      216    if err == redis.Nil {
+      211 -    return false // key 不存在：token 已吊销或从未写入        
+      217 +    return false // key 不存在：已吊销或从未写入              
+      218    }
+      213 -  // Redis 其他错误（网络抖动等）：降级放行，避免 Redis 故障踢
+          -出所有用户                                                    
+      214 -  log.Printf("token 白名单查询失败 jti=%s，降级放行: %v", jti,
+          - err)                                                         
+      219 +  log.Printf("白名单查询失败 key=%s，降级放行: %v", key, err) 
+      220    return true
+      221  }
+      222  
+      223 +// ── Refresh token 白名单 ───────────────────────────────────
+          +───────────────────                                           
+      224 +// key 格式：jwt:refresh:{jti}，TTL = refresh token 有效期。  
+      225 +// 登录/注册时 SetRefreshToken，退出时 DelRefreshToken，刷新接
+          +口用 RefreshTokenExists 校验。                                
+      226 +// 降级策略与 access token 白名单一致（Redis 故障时放行）。   
+      227 +                                                              
+      228 +const refreshKeyPrefix = "jwt:refresh:"                       
+      229 +                                                              
+      230 +func refreshKey(jti string) string { return refreshKeyPrefix +
+          + jti }                                                        
+      231 +                                                              
+      232 +// SetRefreshToken 将 refresh token 的 jti 写入白名单，ttl 与 
+          +refresh token 有效期相同。                                    
+      233 +func (c *Cache) SetRefreshToken(ctx context.Context, jti strin
+          +g, ttl time.Duration) {                                       
+      234 +  if c == nil {                                               
+      235 +    return                                                    
+      236 +  }                                                           
+      237 +  if err := c.rdb.Set(ctx, refreshKey(jti), "1", ttl).Err(); e
+          +rr != nil {                                                   
+      238 +    log.Printf("refresh 白名单写入失败 jti=%s: %v", jti, err) 
+      239 +  }                                                           
+      240 +}                                                             
+      241 +                                                              
+      242 +// DelRefreshToken 吊销 refresh token（退出登录时调用）。     
+      243 +func (c *Cache) DelRefreshToken(ctx context.Context, jti strin
+          +g) {                                                          
+      244 +  if c == nil {                                               
+      245 +    return                                                    
+      246 +  }                                                           
+      247 +  if err := c.rdb.Del(ctx, refreshKey(jti)).Err(); err != nil 
+          +{                                                             
+      248 +    log.Printf("refresh 白名单删除失败 jti=%s: %v", jti, err) 
+      249 +  }                                                           
+      250 +}                                                             
+      251 +                                                              
+      252 +// RefreshTokenExists 返回 refresh token 的 jti 是否在白名单中
+          +。                                                            
+      253 +func (c *Cache) RefreshTokenExists(ctx context.Context, jti st
+          +ring) bool {                                                  
+      254 +  return c.whitelistExists(ctx, refreshKey(jti))              
+      255 +}                                                             
+      256 +                                                              
+      257  // ── 点赞计数器 ─────────────────────────────────────────────
+           ───────────────────
+      258  // key 格式：likes:delta:{docID}
+      259  // 存储的是"自上次回写 MySQL 以来的增量"，可为负数（取消点赞）
+           。
+  Thought for 11s (ctrl+o to expand)
+
+● Now the middleware — distinguish expired ATs and reject refresh tokens on
+  business routes:
+
+● Update(backend\internal\middleware\jwt.go)
+  ⎿  Added 1 line
+      1  package middleware
+      2  
+      3  import (
+      4 +  "errors"                                                      
+      5    "markdown-editor-backend/internal/cache"
+      6    "markdown-editor-backend/internal/utils"
+      7    "markdown-editor-backend/pkg/api"
+  ⎿  Found 1 new diagnostic issue in 1 file (ctrl+o to expand)
+
+● Update(backend\internal\middleware\jwt.go)
+  ⎿  Added 12 lines
+      32      // 第一层：JWT 签名 + 过期校验
+      33      claims, err := jwt.VerifyToken(parts[1])
+      34      if err != nil {
+      35 +      // access token 过期返回可识别错误码，前端据此用 refresh 
+         +token 静默续期                                                 
+      36 +      if errors.Is(err, utils.ErrTokenExpired) {               
+      37 +        api.Error(ctx, http.StatusUnauthorized, "token_expired"
+         +)                                                              
+      38 +      } else {                                                 
+      39 +        api.Error(ctx, http.StatusUnauthorized, "Invalid or exp
+         +ired token")                                                   
+      40 +      }                                                        
+      41 +      ctx.Abort()                                              
+      42 +      return                                                   
+      43 +    }                                                          
+      44 +                                                               
+      45 +    // 拒绝用 refresh token 访问业务接口                       
+      46 +    if claims.Typ != utils.TokenTypeAccess {                   
+      47        api.Error(ctx, http.StatusUnauthorized, "Invalid or expir
+          ed token")
+      48        ctx.Abort()
+      49        return
+
+  Thought for 15s (ctrl+o to expand)
+
+● Now the auth handler — Register, Login, Logout, plus a shared issueTokens
+  helper and the new Refresh:
+
+● Update(backend\internal\handlers\auth_handler.go)
+  ⎿  Added 3 lines, removed 3 lines
+      58  
+      59    userID, _ := result.LastInsertId()
+      60  
+      61 -  token, jti, err := h.jwt.GenerateToken(userID, req.Username) 
+      61 +  tokens, err := h.issueTokens(c, userID, req.Username)        
+      62    if err != nil {
+      63      api.Error(c, http.StatusInternalServerError, "Failed to gen
+          erate token")
+      64      return
+      65    }
+      66 -  h.cache.SetToken(c.Request.Context(), jti, h.jwt.Expiry())   
+      66  
+      67    api.Success(c, gin.H{
+      69 -    "token": token,                                            
+      68 +    "access_token":  tokens.access,                            
+      69 +    "refresh_token": tokens.refresh,                           
+      70      "user": gin.H{
+      71        "id":       userID,
+      72        "username": req.Username,
+
+● Update(backend\internal\handlers\auth_handler.go)
+  ⎿  Added 3 lines, removed 3 lines
+      102      return
+      103    }
+      104  
+      105 -  token, jti, err := h.jwt.GenerateToken(user.ID, user.Usernam
+          -e)                                                            
+      105 +  tokens, err := h.issueTokens(c, user.ID, user.Username)     
+      106    if err != nil {
+      107      api.Error(c, http.StatusInternalServerError, "Failed to ge
+           nerate token")
+      108      return
+      109    }
+      110 -  h.cache.SetToken(c.Request.Context(), jti, h.jwt.Expiry())  
+      110  
+      111    api.Success(c, gin.H{
+      113 -    "token": token,                                           
+      112 +    "access_token":  tokens.access,                           
+      113 +    "refresh_token": tokens.refresh,                          
+      114      "user": gin.H{
+      115        "id":       user.ID,
+      116        "username": user.Username,
+  ⎿  Found 2 new diagnostic issues in 1 file (ctrl+o to expand)
+
+  Thought for 13s (ctrl+o to expand)
+
+● Now update Logout and add Refresh + the issueTokens helper:
+
+● Update(backend\internal\handlers\auth_handler.go)
+  ⎿  Added 67 lines, removed 7 lines
+      144    api.Success(c, user)
+      145  }
+      146  
+      147 -// Logout 主动吊销当前 token：从 Redis 白名单删除 JTI。       
+      148 -// Redis 不可用时静默成功（token 将随 JWT 自然过期）。        
+      147 +// Logout 吊销当前会话：删除当前 access token，以及请求体中携 
+          +带的 refresh token 的白名单条目。                             
+      148 +// Redis 不可用时静默成功（token 将随自身有效期自然过期）。   
+      149  func (h *AuthHandler) Logout(c *gin.Context) {
+      150 -  jti, exists := c.Get("jti")                                 
+      151 -  if !exists {                                                
+      152 -    api.Success(c, gin.H{"message": "已退出"})                
+      153 -    return                                                    
+      150 +  ctx := c.Request.Context()                                  
+      151 +                                                              
+      152 +  // 吊销当前 access token（jti 由中间件写入 context）        
+      153 +  if jti, exists := c.Get("jti"); exists {                    
+      154 +    h.cache.DelToken(ctx, jti.(string))                       
+      155    }
+      155 -  h.cache.DelToken(c.Request.Context(), jti.(string))         
+      156 +                                                              
+      157 +  // 吊销 refresh token（前端在 body 里带上）                 
+      158 +  var body struct {                                           
+      159 +    RefreshToken string `json:"refresh_token"`                
+      160 +  }                                                           
+      161 +  if err := c.ShouldBindJSON(&body); err == nil && body.Refres
+          +hToken != "" {                                                
+      162 +    if claims, err := h.jwt.VerifyToken(body.RefreshToken); er
+          +r == nil && claims.Typ == utils.TokenTypeRefresh {            
+      163 +      h.cache.DelRefreshToken(ctx, claims.ID)                 
+      164 +    }                                                         
+      165 +  }                                                           
+      166 +                                                              
+      167    api.Success(c, gin.H{"message": "已退出"})
+      168  }
+      169 +                                                              
+      170 +// Refresh 用 refresh token 换取新的 access token（静态 RT：不
+          +轮换 refresh token）。                                        
+      171 +// 校验链：签名/有效期 → 类型必须为 refresh → Redis 白名单未吊
+          +销。                                                          
+      172 +func (h *AuthHandler) Refresh(c *gin.Context) {               
+      173 +  var req struct {                                            
+      174 +    RefreshToken string `json:"refresh_token" binding:"require
+          +d"`                                                           
+      175 +  }                                                           
+      176 +  if err := c.ShouldBindJSON(&req); err != nil {              
+      177 +    api.Error(c, http.StatusBadRequest, "refresh_token 不能为 
+          +空")                                                          
+      178 +    return                                                    
+      179 +  }                                                           
+      180 +                                                              
+      181 +  claims, err := h.jwt.VerifyToken(req.RefreshToken)          
+      182 +  if err != nil || claims.Typ != utils.TokenTypeRefresh {     
+      183 +    api.Error(c, http.StatusUnauthorized, "refresh token 无效 
+          +或已过期")                                                    
+      184 +    return                                                    
+      185 +  }                                                           
+      186 +  if !h.cache.RefreshTokenExists(c.Request.Context(), claims.I
+          +D) {                                                          
+      187 +    api.Error(c, http.StatusUnauthorized, "refresh token 已失 
+          +效，请重新登录")                                              
+      188 +    return                                                    
+      189 +  }                                                           
+      190 +                                                              
+      191 +  accessToken, jti, err := h.jwt.GenerateAccessToken(claims.Us
+          +erID, claims.Username)                                        
+      192 +  if err != nil {                                             
+      193 +    api.Error(c, http.StatusInternalServerError, "签发 token  
+          +失败")                                                        
+      194 +    return                                                    
+      195 +  }                                                           
+      196 +  h.cache.SetToken(c.Request.Context(), jti, h.jwt.AccessExpir
+          +y())                                                          
+      197 +                                                              
+      198 +  api.Success(c, gin.H{"access_token": accessToken})          
+      199 +}                                                             
+      200 +                                                              
+      201 +type tokenPair struct{ access, refresh string }               
+      202 +                                                              
+      203 +// issueTokens 签发 access + refresh token，并把各自的 jti 写 
+          +入 Redis 白名单。                                             
+      204 +func (h *AuthHandler) issueTokens(c *gin.Context, userID int64
+          +, username string) (tokenPair, error) {                       
+      205 +  accessToken, atJTI, err := h.jwt.GenerateAccessToken(userID,
+          + username)                                                    
+      206 +  if err != nil {                                             
+      207 +    return tokenPair{}, err                                   
+      208 +  }                                                           
+      209 +  refreshToken, rtJTI, err := h.jwt.GenerateRefreshToken(userI
+          +D, username)                                                  
+      210 +  if err != nil {                                             
+      211 +    return tokenPair{}, err                                   
+      212 +  }                                                           
+      213 +  ctx := c.Request.Context()                                  
+      214 +  h.cache.SetToken(ctx, atJTI, h.jwt.AccessExpiry())          
+      215 +  h.cache.SetRefreshToken(ctx, rtJTI, h.jwt.RefreshExpiry())  
+      216 +  return tokenPair{access: accessToken, refresh: refreshToken}
+          +, nil                                                         
+      217 +}                                                             
+
+● Now wire up the server — update the NewJWTManager call and add the refresh
+  route:
+
+● Update(backend\internal\server\server.go)
+  ⎿  Added 5 lines, removed 1 line
+      81    })
+      82  
+      83    // JWT管理器
+      84 -  jwt := utils.NewJWTManager(s.cfg.JWT.Secret, s.cfg.JWT.Expiry
+         -)                                                              
+      84 +  jwt := utils.NewJWTManager(                                  
+      85 +    s.cfg.JWT.Secret,                                          
+      86 +    time.Duration(s.cfg.JWT.AccessExpiry)*time.Minute,         
+      87 +    time.Duration(s.cfg.JWT.RefreshExpiry)*time.Hour,          
+      88 +  )                                                            
+      89  
+      90    // 处理器
+      91    authHandler := handlers.NewAuthHandler(s.db, jwt, s.cache)
+
+● Update(backend\internal\server\server.go)
+  ⎿  Added 2 lines, removed 1 line
+      105      {
+      106        auth.POST("/register", authHandler.Register)
+      107        auth.POST("/login", authHandler.Login)
+      108 -      auth.POST("/logout", jwtAuth, authHandler.Logout) // 新 
+          -增退出接口                                                    
+      108 +      auth.POST("/refresh", authHandler.Refresh)         // 用
+          + refresh token 换发新 access token                            
+      109 +      auth.POST("/logout", jwtAuth, authHandler.Logout)  // 退
+          +出并吊销 access + refresh token                               
+      110      }
+      111  
+      112      // 用户相关（需要认证）
+
+● Backend is complete. Let me build and vet before touching the frontend:
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./... 2>&1 && echo "VET
+      OK")
+  ⎿  BUILD OK
+     VET OK
+
+  Thought for 2m 24s (ctrl+o to expand)
+
+● Backend compiles. Now I need to reconsider one edge case in my logout design:
+  logout currently sits behind jwtAuth, so an expired access token would make 
+  logout itself fail — meaning the long-lived refresh token could never be
+  revoked (defeating "自主吊销"). Let me fix that: make /logout public and have
+  it authenticate via the refresh token in the body (plus best-effort revoke the
+  AT from the header if still valid).
+
+● Update(backend\internal\handlers\auth_handler.go)
+  ⎿  Added 1 line
+       7    "markdown-editor-backend/internal/utils"
+       8    "markdown-editor-backend/pkg/api"
+       9    "net/http"
+      10 +  "strings"                                                    
+      11  
+      12    "github.com/gin-gonic/gin"
+      13    "golang.org/x/crypto/bcrypt"
+  ⎿  Found 1 new diagnostic issue in 1 file (ctrl+o to expand)
+
+● Update(backend\internal\handlers\auth_handler.go)
+  ⎿  Added 10 lines, removed 7 lines
+      145    api.Success(c, user)
+      146  }
+      147  
+      148 -// Logout 吊销当前会话：删除当前 access token，以及请求体中携 
+          -带的 refresh token 的白名单条目。                             
+      148 +// Logout 吊销当前会话：删除 refresh token（请求体携带）与 acc
+          +ess token（Authorization 头携带）                             
+      149 +// 的白名单条目。该接口不挂 JWT 中间件——即使 access token 已过
+          +期也能成功登出并吊销 refresh token。                          
+      150  // Redis 不可用时静默成功（token 将随自身有效期自然过期）。
+      151  func (h *AuthHandler) Logout(c *gin.Context) {
+      152    ctx := c.Request.Context()
+      153  
+      153 -  // 吊销当前 access token（jti 由中间件写入 context）        
+      154 -  if jti, exists := c.Get("jti"); exists {                    
+      155 -    h.cache.DelToken(ctx, jti.(string))                       
+      156 -  }                                                           
+      157 -                                                              
+      158 -  // 吊销 refresh token（前端在 body 里带上）                 
+      154 +  // 吊销 refresh token（会话锚点，长有效期，是登出的关键）   
+      155    var body struct {
+      156      RefreshToken string `json:"refresh_token"`
+      157    }
+     ...
+      161      }
+      162    }
+      163  
+      164 +  // 顺带吊销仍有效的 access token；若已过期，其白名单条目已随
+          + TTL 自动消失，无需处理                                       
+      165 +  if ah := c.GetHeader("Authorization"); strings.HasPrefix(ah,
+          + "Bearer ") {                                                 
+      166 +    if claims, err := h.jwt.VerifyToken(strings.TrimPrefix(ah,
+          + "Bearer ")); err == nil && claims.Typ == utils.TokenTypeAcces
+          +s {                                                           
+      167 +      h.cache.DelToken(ctx, claims.ID)                        
+      168 +    }                                                         
+      169 +  }                                                           
+      170 +                                                              
+      171    api.Success(c, gin.H{"message": "已退出"})
+      172  }
+      173  
+
+● Now make /logout public in the router (it authenticates via the refresh token
+  itself):
+
+● Update(backend\internal\server\server.go)
+  ⎿  Added 2 lines, removed 2 lines
+      105      {
+      106        auth.POST("/register", authHandler.Register)
+      107        auth.POST("/login", authHandler.Login)
+      108 -      auth.POST("/refresh", authHandler.Refresh)         // 用
+          - refresh token 换发新 access token                            
+      109 -      auth.POST("/logout", jwtAuth, authHandler.Logout)  // 退
+          -出并吊销 access + refresh token                               
+      108 +      auth.POST("/refresh", authHandler.Refresh) // 用 refresh
+          + token 换发新 access token                                    
+      109 +      auth.POST("/logout", authHandler.Logout)    // 退出并吊 
+          +销 access + refresh token（不挂中间件，AT 过期也能登出）      
+      110      }
+      111  
+      112      // 用户相关（需要认证）
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./... 2>&1 && echo "VET
+      OK")
+  ⎿  BUILD OK
+     VET OK
+
+  Thought for 24s (ctrl+o to expand)
+
+● Backend done. Now the frontend — the silent-refresh interceptor and the auth
+  composable. Replacing the response interceptor in api.js:
+● Update(frontend\src\services\api.js)
+  ⎿  Added 70 lines, removed 3 lines
+       22    }
+       23  )
+       24  
+       25 +// 静默刷新状态：刷新进行中时，并发的 401 请求挂起排队，等新 a
+          +ccess token 到手后统一重试                                    
+       26 +let isRefreshing = false                                      
+       27 +let pendingQueue = []                                         
+       28 +const flushQueue = (newToken) => {                            
+       29 +  pendingQueue.forEach((cb) => cb(newToken))                  
+       30 +  pendingQueue = []                                           
+       31 +}                                                             
+       32 +const clearAuthStorage = () => {                              
+       33 +  localStorage.removeItem('token')                            
+       34 +  localStorage.removeItem('refresh_token')                    
+       35 +  localStorage.removeItem('user')                             
+       36 +}                                                             
+       37 +                                                              
+       38  api.interceptors.response.use(
+       39    (response) => response.data,
+       27 -  (error) => {                                                
+       40 +  async (error) => {                                          
+       41 +    const originalRequest = error.config                      
+       42 +    const status = error.response?.status                     
+       43 +                                                              
+       44 +    // access token 过期：用 refresh token 静默换新并重试原请 
+          +求                                                            
+       45 +    if (                                                      
+       46 +      status === 401 &&                                       
+       47 +      error.response?.data?.error === 'token_expired' &&      
+       48 +      originalRequest &&                                      
+       49 +      !originalRequest._retried &&                            
+       50 +      localStorage.getItem('refresh_token')                   
+       51 +    ) {                                                       
+       52 +      originalRequest._retried = true                         
+       53 +                                                              
+       54 +      // 已有刷新在进行：排队等待，拿到新 token 后重试本请求  
+       55 +      if (isRefreshing) {                                     
+       56 +        return new Promise((resolve, reject) => {             
+       57 +          pendingQueue.push((newToken) => {                   
+       58 +            if (!newToken) {                                  
+       59 +              reject(error)                                   
+       60 +              return                                          
+       61 +            }                                                 
+       62 +            originalRequest.headers.Authorization = `Bearer ${
+          +newToken}`                                                    
+       63 +            resolve(api(originalRequest))                     
+       64 +          })                                                  
+       65 +        })                                                    
+       66 +      }                                                       
+       67 +                                                              
+       68 +      isRefreshing = true                                     
+       69 +      try {                                                   
+       70 +        // 用裸 axios 调用，绕过本拦截器，避免刷新失败时递归  
+       71 +        const resp = await axios.post(`${API_BASE_URL}/api/aut
+          +h/refresh`, {                                                 
+       72 +          refresh_token: localStorage.getItem('refresh_token')
+       73 +        })                                                    
+       74 +        const newToken = resp.data?.data?.access_token        
+       75 +        if (!newToken) throw new Error('refresh 响应缺少 acces
+          +s_token')                                                     
+       76 +        localStorage.setItem('token', newToken)               
+       77 +        flushQueue(newToken)                                  
+       78 +        originalRequest.headers.Authorization = `Bearer ${newT
+          +oken}`                                                        
+       79 +        return api(originalRequest)                           
+       80 +      } catch (e) {                                           
+       81 +        flushQueue(null) // 通知排队请求：刷新失败            
+       82 +        clearAuthStorage()                                    
+       83 +        if (window.location.pathname !== '/login') {          
+       84 +          window.location.href = '/login'                     
+       85 +        }                                                     
+       86 +        return Promise.reject({                               
+       87 +          success: false,                                     
+       88 +          error: 'token_expired',                             
+       89 +          message: '登录已过期，请重新登录'                   
+       90 +        })                                                    
+       91 +      } finally {                                             
+       92 +        isRefreshing = false                                  
+       93 +      }                                                       
+       94 +    }                                                         
+       95 +                                                              
+       96      if (error.response) {
+       97        const { status, data } = error.response
+       98        switch (status) {
+       99          case 401: {
+      100            const hadToken = !!localStorage.getItem('token')
+       33 -          localStorage.removeItem('token')                    
+       34 -          localStorage.removeItem('user')                     
+      101 +          clearAuthStorage()                                  
+      102            // 仅当用户曾登录（有 token）却收到 401 时跳转登录页
+           ；游客模式不跳转，可继续浏览
+      103            if (hadToken && window.location.pathname !== '/login
+           ') {
+      104              window.location.href = '/login'
+
+● Now authAPI.logout — call the backend to revoke, then clear storage:
+
+● Update(frontend\src\services\api.js)
+  ⎿  Added 10 lines, removed 1 line
+      144    register: (data) => api.post('/api/auth/register', data),
+      145    login: (data) => api.post('/api/auth/login', data),
+      146    getProfile: () => api.get('/api/users/profile'),
+      147 -  logout: () => {                                             
+      147 +  // 通知后端吊销 access + refresh token（refresh_token 放 bod
+          +y，access token 由请求拦截器带 header）。                     
+      148 +  // 尽力而为：网络/鉴权失败也不应阻塞本地登出，调用方负责清理
+          +本地存储。                                                    
+      149 +  logout: async () => {                                       
+      150 +    const refreshToken = localStorage.getItem('refresh_token')
+      151 +    try {                                                     
+      152 +      await api.post('/api/auth/logout', { refresh_token: refr
+          +eshToken })                                                   
+      153 +    } catch (e) {                                             
+      154 +      /* 忽略：本地登出照常进行 */                            
+      155 +    }                                                         
+      156      localStorage.removeItem('token')
+      157 +    localStorage.removeItem('refresh_token')                  
+      158      localStorage.removeItem('user')
+      159    }
+      160  }
+
+  Thought for 11s (ctrl+o to expand)
+
+● Now the auth composable — store both tokens, async logout, and read the new
+  response fields:
+
+● Update(frontend\src\composables\useAuth.js)
+  ⎿  Added 6 lines, removed 4 lines
+      12    // 初始化恢复用户状态由 App.vue 的 onMounted 中调用 fetchProf
+          ile 完成，此处不再使用 onMounted，
+      13    // 否则在路由守卫等非组件上下文中调用 useAuth() 时会触发 "no 
+          active component instance" 警告。
+      14  
+      15 -  const setAuth = (newToken, userData) => {                    
+      16 -    token.value = newToken                                     
+      15 +  const setAuth = (accessToken, refreshToken, userData) => {   
+      16 +    token.value = accessToken                                  
+      17      user.value = userData
+      18 -    localStorage.setItem('token', newToken)                    
+      18 +    localStorage.setItem('token', accessToken)                 
+      19 +    localStorage.setItem('refresh_token', refreshToken)        
+      20      localStorage.setItem('user', JSON.stringify(userData))
+      20 -                                                               
+      21 +                                                               
+      22      // 如果用户选择记住密码，设置更长的存储时间
+      23      if (window.location.href.includes('remember=true')) {
+      24        localStorage.setItem('remember', 'true')
+     ...
+      29      token.value = null
+      30      user.value = null
+      31      localStorage.removeItem('token')
+      32 +    localStorage.removeItem('refresh_token')                   
+      33      localStorage.removeItem('user')
+      34      localStorage.removeItem('remember')
+      35    }
+
+● Update(frontend\src\composables\useAuth.js)
+  ⎿  Added 3 lines, removed 3 lines
+      44          password
+      45        })
+      46        
+      47 -      // 后端返回格式：{ success: true, data: { token: "...", u
+         -ser: {...} } }                                                 
+      47 +      // 后端返回格式：{ success: true, data: { access_token, r
+         +efresh_token, user } }                                         
+      48        if (response.success && response.data) {
+      49 -        const { token, user } = response.data                  
+      50 -        setAuth(token, user)                                   
+      49 +        const { access_token, refresh_token, user } = response.
+         +data                                                           
+      50 +        setAuth(access_token, refresh_token, user)             
+      51          return { success: true, data: response.data }
+      52        } else {
+      53          error.value = response.error || '注册失败'
+
+● Update(frontend\src\composables\useAuth.js)
+  ⎿  Added 3 lines, removed 3 lines
+      72        
+      73        // 根据后端实际返回的数据结构调整
+      74        if (response.success && response.data) {
+      75 -        const { token, user } = response.data                  
+      76 -        setAuth(token, user)                                   
+      77 -                                                               
+      75 +        const { access_token, refresh_token, user } = response.
+         +data                                                           
+      76 +        setAuth(access_token, refresh_token, user)             
+      77 +                                                               
+      78          // 处理记住密码
+      79          if (remember) {
+      80            localStorage.setItem('rememberedUser', JSON.stringify
+          ({ username }))
+
+● Update(frontend\src\composables\useAuth.js)
+  ⎿  Added 2 lines, removed 2 lines
+       95      }
+       96    }
+       97  
+       98 -  const logout = () => {                                      
+       99 -    authAPI.logout()                                          
+       98 +  const logout = async () => {                                
+       99 +    await authAPI.logout()                                    
+      100      clearAuth()
+      101    }
+      102  
+
+  Thought for 18s (ctrl+o to expand)
+
+● Let me verify nothing else in the frontend depends on the old signatures or
+  the sync logout:
+
+  Thought for 1m 33s, searched for 1 pattern (ctrl+o to expand)
+
+● setAuth is internal-only (both sites updated). logout() is called from three
+  components — let me check they don't depend on it being synchronous:
+
+● Bash(cd /c/Users/ghs/Desktop/alone/frontend/src && for f in
+      components/DesktopPet.vue views/CommunityView.vue components/TopBar.vue;
+      do echo "=== $f ==="; grep -n -B…)
+  ⎿  === components/DesktopPet.vue ===
+     215-const { isAuthenticated, logout } = useAuth()
+     216-const handleAuthAction = () => {
+     … +30 lines (ctrl+o to expand)
+
+  Thought for 29s (ctrl+o to expand)
+
+● All three callers are fire-and-forget (logout() then optionally navigate) —
+  none depend on synchronous completion, so making it async is safe; the local
+  clear + reactive UI update just happen a beat later in the background. And
+  since /logout is now public, the logout POST never 401s, so it won't recurse
+  into silent refresh.
+
+  Let me verify the frontend JS is valid and builds:
+
+● Bash(cd /c/Users/ghs/Desktop/alone/frontend && node --check
+      src/services/api.js 2>&1 && echo "api.js syntax OK"; node --check
+      src/composables/useAuth.js 2>&1 && echo…)
+  ⎿  api.js syntax OK
+     useAuth.js syntax OK
+     node_modules present
+
+  Thought for 12s (ctrl+o to expand)
+
+● Both pass. Let me run the full Vite build to catch any module/usage errors:
+
+● Bash(npm run build 2>&1 | tail -25)
+  ⎿  dist/assets/KaTeX_Main-Bold-138ac28d.ttf                 51.34 kB
+     dist/assets/KaTeX_Main-Regular-d0332f52.ttf              53.58 kB
+     dist/assets/KaTeX_AMS-Regular-68534840.ttf               63.63 kB
+     … +38 lines (ctrl+o to expand)
+
+  Thought for 49s (ctrl+o to expand)
+
+● The frontend builds cleanly (the chunk-size warning is pre-existing). Let me
+  do a final review of the most-edited file to confirm it's coherent end-to-end:
+
+  Thought for 31s, read 1 file (ctrl+o to expand)
+
+● Logout and Refresh read cleanly, and the short-circuit (err == nil && / err !=
+  nil ||) safely guards the nil-claims case. One orphan my change created: the
+  middleware still does ctx.Set("jti", …) "for Logout", but the rewritten public
+  Logout reads the header instead — so nothing consumes it now. Let me remove
+  that dead line:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(backend\internal\middleware\jwt.go)
+  ⎿  Removed 1 line
+      58  
+      59      ctx.Set("userID", claims.UserID)
+      60      ctx.Set("username", claims.Username)
+      61 -    ctx.Set("jti", claims.ID) // Logout 时用                   
+      61      ctx.Next()
+      62    }
+      63  }
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./... 2>&1 && echo "VET
+      OK")
+  ⎿  Error: Exit code 1
+     pattern ./...: directory prefix . does not contain main module or its 
+     selected dependencies
+
+  Thought for 9s (ctrl+o to expand)
+
+● Bash(cd /c/Users/ghs/Desktop/alone/backend && go build ./... 2>&1 && echo
+      "BUILD OK" && go vet ./... 2>&1 && echo "VET OK")  ⎿  BUILD OK
+     VET OK
+
+  Thought for 1m 3s (ctrl+o to expand)
+
+● All green — backend builds + vets, frontend builds. Here's the complete
+  implementation.
+
+  What was built
+
+  Access + refresh tokens layered onto the existing JWT + Redis dual-auth,
+  giving silent refresh and self-revocation, per your choices (static RT,
+  current-session revocation, keep the per-request whitelist).
+
+  Token model
+
+  ┌─────────────┬─────────────────────────────┬─────────────────────────────┐
+  │             │        Access token         │        Refresh token        │
+  ├─────────────┼─────────────────────────────┼─────────────────────────────┤
+  │ Lifetime    │ 15 min (JWT_ACCESS_EXPIRY)  │ 7 days (JWT_REFRESH_EXPIRY) │
+  ├─────────────┼─────────────────────────────┼─────────────────────────────┤
+  │ Claim       │ typ:"access"                │ typ:"refresh"               │
+  ├─────────────┼─────────────────────────────┼─────────────────────────────┤
+  │ Redis       │ jwt:active:{jti} (checked   │ jwt:refresh:{jti} (checked  │
+  │ whitelist   │ every request)              │ on refresh)                 │
+  ├─────────────┼─────────────────────────────┼─────────────────────────────┤
+  │ Purpose     │ API auth                    │ mint new ATs                │
+  └─────────────┴─────────────────────────────┴─────────────────────────────┘
+
+  Silent refresh flow — middleware tags an expired AT with error code
+  token_expired → frontend interceptor catches it, calls POST /api/auth/refresh
+  with the RT (via bare axios, bypassing the interceptor), stores the new AT,
+  and replays the original request. Concurrent 401s queue behind a single
+  in-flight refresh (isRefreshing + pendingQueue).
+
+  Self-revocation — POST /api/auth/logout (now public) revokes the RT from the
+  body and the AT from the header. Since the AT whitelist is checked on every
+  request, revocation is instant; the RT being gone blocks further refreshes.
+
+  Files changed
+
+  Backend
+  - utils/jwt.go — typ claim; GenerateAccessToken/GenerateRefreshToken;
+  VerifyToken returns ErrTokenExpired for the expired case;
+  AccessExpiry/RefreshExpiry.
+  - cache/redis.go — refactored TokenExists into a shared whitelistExists (same
+  degrade-open semantics) + SetRefreshToken/DelRefreshToken/RefreshTokenExists.
+  - middleware/jwt.go — emit token_expired; reject typ != access; dropped the
+  now-dead ctx.Set("jti").
+  - handlers/auth_handler.go — issueTokens helper; login/register return
+  {access_token, refresh_token, user}; new Refresh; rewritten public Logout.
+  - config/config.go + server/server.go — new expiry config, NewJWTManager
+  wiring, /auth/refresh route, /auth/logout made public.
+
+  Frontend
+  - services/api.js — silent-refresh response interceptor with concurrency
+  queue; authAPI.logout calls the backend then clears storage.
+  - composables/useAuth.js — store/clear refresh_token; read
+  access_token/refresh_token; async logout.
+
+  ⚠️ Action needed
+
+  New env vars (the old JWT_EXPIRY is no longer read):
+  JWT_ACCESS_EXPIRY=15     # minutes
+  JWT_REFRESH_EXPIRY=168   # hours (7 days)
+  Defaults apply if unset. After deploy, all existing tokens become invalid
+  (they lack the typ claim → rejected), so current users will be logged out once
+  and must re-login. The localStorage key stays token for the AT (so other code
+  reading it is unaffected); refresh_token is added.
+
+  How to verify (needs MySQL + Redis running)
+
+  # 1. login → returns access_token + refresh_token
+  curl -s -XPOST localhost:8080/api/auth/login -H 'Content-Type: 
+  application/json' \
+    -d '{"username":"admin","password":"123456"}'
+
+  # 2. refresh → returns a fresh access_token
+  curl -s -XPOST localhost:8080/api/auth/refresh -H 'Content-Type: 
+  application/json' \
+    -d '{"refresh_token":"<RT>"}'
+
+  # 3. logout → revokes both; reusing the AT now 401s "Token has been revoked"
+  curl -s -XPOST localhost:8080/api/auth/logout -H 'Authorization: Bearer <AT>'
+  \
+    -H 'Content-Type: application/json' -d '{"refresh_token":"<RT>"}'
+  In the browser: set JWT_ACCESS_EXPIRY=1, log in, wait a minute, trigger a
+  request — it should refresh transparently with no redirect to /login.
+
+  Notes & possible follow-ups
+
+  - Redis-down degradation is preserved: AT/RT whitelist checks degrade to allow
+  (signature+expiry still enforced), so an outage won't lock everyone out;
+  logout becomes a no-op (tokens expire naturally).
+  - Deliberately left out (your choices): RT rotation/reuse-detection, and
+  "logout all devices". Both are clean add-ons later — rotation needs the
+  frontend to persist each new RT; logout-all needs a per-user token generation
+  counter.
+  - RT lives in localStorage (consistent with the current app). If you later
+  want stronger XSS resistance, moving the RT to an httpOnly cookie is the
+  standard hardening — that's a larger change (CORS credentials + CSRF) I can do
+  separately.
+
+✻ Crunched for 27m 11s
+
+※ recap: We added access/refresh JWT tokens with silent refresh and self-revocation to your editor's auth; backend and frontend both build clean. Next, run it against MySQL and Redis to verify login, refresh, and logout work end-to-end. (disable recaps in /config)
+
+❯ 总结此次修改，                                                                
+
+  Thought for 47s (ctrl+o to expand)
+
+● 本次修改总结
+
+  围绕缓存和鉴权两块,共改动后端 7 个文件、前端 2 个文件,分三步推进。
+
+  ---
+  一、缓存失效:版本号 → 延迟双删
+
+  问题:每次写操作 INCR posts:ver 会让整个命名空间(所有列表页 +
+  所有详情)瞬间失效,引发雪崩。
+
+  改动 (cache/redis.go、post_handler.go、document_handler.go):
+  - 删除 IncrVersion/GetVersion,key 去掉版本号段。
+  - 新增 Del、delByPrefix(SCAN 遍历,不用
+  KEYS)、PostsListKey/PostDetailKey、InvalidatePosts。
+  - InvalidatePosts = 延迟双删:更新 DB 后立即删一次 → time.AfterFunc 延迟 500ms
+  用独立 context 再删一次(请求 context 此时已取消)。
+  - 详情失效变精确:点赞 #3 只清 post:3,不再波及其它帖子详情。
+
+  二、防雪崩:TTL 随机抖动
+
+  改动 (cache/redis.go、post_handler.go):
+  - 新增包级纯函数 JitterTTL(base),返回 base + 0~20% 随机量。
+  - 两处 Set 改用 cache.JitterTTL(postsCacheTTL),每个 key 独立抖动 →
+  过期时间打散到 60~72s,避免集中过期。
+
+  三、Access + Refresh Token(无感刷新 + 自主吊销)
+
+  你确认的方案:保留 AT 每请求查白名单(即时吊销)、固定 
+  RT(不轮换)、仅当前会话吊销。
+
+  后端:
+  - utils/jwt.go:加 typ
+  claim;GenerateAccessToken/GenerateRefreshToken;VerifyToken 过期时返回
+  ErrTokenExpired。
+  - cache/redis.go:TokenExists 抽出共享的 whitelistExists,新增
+  SetRefreshToken/DelRefreshToken/RefreshTokenExists(降级语义与 AT 一致)。
+  - middleware/jwt.go:过期返回错误码 token_expired;拒绝 refresh token
+  访问业务接口。
+  - auth_handler.go:issueTokens 同发双 token;新增 Refresh;Logout
+  改为公开接口(body 带 RT + header 带 AT 一并吊销,AT 过期也能登出)。
+  - config.go/server.go:新增过期配置,接 /auth/refresh 路由,/auth/logout
+  去掉中间件。
+
+  前端:
+  - services/api.js:响应拦截器实现静默刷新(401+token_expired → 用 RT 换新 AT
+  重试原请求,并发请求排队);logout 调后端吊销再清本地。
+  - composables/useAuth.js:存取 refresh_token,logout 改异步。
+
+  ---
+  ⚠️ 部署须知
+
+  - 新增环境变量(旧 JWT_EXPIRY 不再读取):
+  JWT_ACCESS_EXPIRY=15     # 分钟
+  JWT_REFRESH_EXPIRY=168   # 小时(7天)
+  - 部署后存量 token 全部失效(无 typ claim),用户需重新登录一次。
+  - 新增 Redis key:jwt:refresh:{jti}。
+
+  ✅ 验证状态
+
+  - 后端 go build ./... + go vet ./... 通过。
+  - 前端 npm run build 通过。
+  - 因本机无 MySQL/Redis,止于编译层;运行时验证步骤已在上一条回复给出。
+
+  🔜 未做(可选后续)
+
+  - singleflight 防击穿:缓存失效后合并并发重建,只剩这块没补。
+  - RT 轮换 / 登出所有设备 / RT 改 httpOnly Cookie(按你的选择本次未做)。
+
+  需要的话,下一步我可以把 singleflight
+  防击穿补上——这样缓存的「失效精度、雪崩、击穿」三件套就齐了。
+
+✻ Crunched for 48s
+
+❯ 总览项目，当前哪些地方可以使用kafka优化                                       
+
+  Thought for 47s (ctrl+o to expand)
+
+● Good question — but Kafka is heavyweight infrastructure, so before
+  recommending it I want to ground the analysis in what the project actually
+  does and at what scale. Let me survey the parts I haven't fully seen.
+
+  Thought for 1m 26s, searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● 我已经把后端各 handler、缓存、鉴权都过了一遍。先给结论,再列候选点。
+
+  先说结论
+
+  当前是单实例 Go 单体 + MySQL + Redis,压测里 documents 才 14 行、QPS 天花板
+  ~12K,全链路同步、没有第二个消费者/服务/实例。在这个规模下,Kafka 
+  在任何一处都属于过度设计:它要引入 broker
+  集群(KRaft/ZK)、位点管理、至少一次语义(消费者得做幂等)、消费延迟和一堆新故障模
+  式,而它的核心收益——解耦、削峰、扇出、回放——此刻都还没有需求场景。
+
+  所以分两层看:
+  - 若为扛真实负载:没有一处现在需要 Kafka,我在每条后面给了"右尺寸"替代。
+  - 若为学习/作品集演示分布式能力(看你前面做压测→JWT→Redis
+  的路线,挺像这个目的):最值得落地的接入点我标了 ⭐。
+
+  候选场景(按真实合理度排序)
+
+  1. ⭐ 点赞计数写回(write-behind)——最具体
+  - 现状:每次点赞 IncrLike(Redis)+ 同步 UPDATE documents.likes_count(MySQL)+
+  失效缓存。热帖高频点赞时,这条同步 UPDATE 是写放大 + likes_count 行锁竞争点。
+  - Kafka 角色:点赞作为事件投递,消费者聚合后批量回写 MySQL,把写峰值从 DB
+  上卸下来。
+  - 更轻量替代:你已经有 likes:delta 计数器了——加一个定时 goroutine(ticker)调 
+  FlushLikeDelta 批量回写即可,零新基建。或用 Redis Stream 当轻量队列。
+  - 何时才真需要 Kafka:多实例 + 持续数千 like/s + 要跨实例可靠聚合/回放。
+
+  2. 数据变更事件总线(CDC:binlog→Kafka)
+  - 现状:缓存用 cache-aside + 延迟双删(应用内驱动)。
+  - Kafka 角色:Debezium/Canal 把 MySQL binlog 推到 Kafka,多个消费者各取所需——失
+  效缓存、同步搜索索引、喂分析库。这是"事件骨干"的标准形态。
+  - 更轻量替代:单体里现有的延迟双删已经够;这正是我们上次讨论时我判定对当前规模过
+  度设计的方案。
+  - 何时才真需要:出现多实例/多服务都要消费同一份变更流时。
+
+  3. 全文搜索索引同步(若引入 ES)
+  - 现状:SearchDocuments 用 title LIKE '%q%',不搜正文、无分词排序。
+  - Kafka 角色:文档增删改 → Kafka → 索引消费者异步同步到 ES,不阻塞上传、ES
+  宕了也能靠日志补。
+  - 更轻量替代:先上 MySQL FULLTEXT 索引(零新基建),或 handler 内同步写 ES。
+  - 何时才真需要:语料大 + 要正文全文检索 + 想要索引重建/回放。
+
+  4. 图片/文档异步处理(若加重处理)
+  - 现状:UploadImage 只存文件 + 建记录,没有缩略图/压缩/EXIF 清理/服务端导出
+  PDF。
+  - Kafka 角色:上传后投递处理任务,worker 异步跑、更新记录。
+  - 更轻量替代:进程内 goroutine worker pool(带缓冲 channel),或 Redis
+  任务队列(asynq)。单实例够用。
+  - 何时才真需要:处理重 + 要持久化重试 + worker 要横向扩容。
+
+  5. 行为日志/分析、6. 通知 —— 都属于"功能还不存在"。真要做用户埋点分析(高写入、
+  多消费者、要回放灌数仓)或"点赞/评论通知",Kafka 才是顺手的;现在写一张 MySQL
+  表就够。
+
+  一个具体发现(顺带)
+
+  FlushLikeDelta 是死代码——定义了、注释说"由 handler
+  或定时任务调用",但全项目没人调它。而点赞路径同时写了 Redis delta 和同步 MySQL
+  UPDATE,等于有两套互相竞争的回写机制,只有同步那套在跑;delta
+  一直累积不回写(若哪天真去调 FlushLikeDelta 再加到 MySQL,反而会重复计数)。
+
+  这正是上面第 1 点的入口:想做异步写回,先把这条理顺(二选一),而理顺它用一个
+  ticker goroutine 就够,不需要 Kafka。
+
+  建议
+
+  - 不追求演示分布式:哪个都别上 Kafka。把点赞写回用 ticker + FlushLikeDelta
+  收一下尾,搜索要增强就先上 MySQL FULLTEXT,这才是当前规模的最优解。
+  - 想在作品集里展示 Kafka:选第 1 点(点赞事件 → 消费者批量回写 
+  MySQL)最真实、最小可用,且能讲清"削峰 + 写放大治理"的故事;进阶再做第 2 点 CDC 
+  总线串起缓存失效 + 搜索同步。
+
+  要的话,我可以先把那条死代码/双写理顺(ticker 批量回写),或者给你搭一个第 1 点的
+  Kafka 最小可用骨架(生产者 + 幂等消费者 + 批量回写),你说方向。
+
+✻ Sautéed for 2m 45s
+
+❯ FlushLikeDelta 是死代码——定义了、注释说"由 handler                            
+  或定时任务调用",但全项目没人调它。而点赞路径同时写了 Redis delta              
+    和同步 MySQL UPDATE,等于有两套互相竞争的回写机制,只有同步那套在跑;delta     
+  一直累积不回写(若哪天真去调 FlushLikeDelta                                    
+    再加到 MySQL,反而会重复计数)。解决这个问题                                  
+
+  Thought for 1m 55s (ctrl+o to expand)
+
+● Let me confirm the exact current state and all usages before deciding how to
+  straighten this out.
+
+  Thought for 32s, searched for 1 pattern (ctrl+o to expand)
+
+● Confirmed: FlushLikeDelta is never called; the delta is only touched in
+  LikePost/UnlikePost, while the read paths (ListPosts/GetPost) already read
+  MySQL's likes_count directly. So MySQL is effectively the source of truth and
+  the Redis delta is vestigial — and in the already_liked branch, base + 
+  GetLikeDelta does double-count.
+
+  There are two opposite ways to "理顺" this, and which one is right depends on
+  whether you want to keep a write-behind path for scale. Since I flagged it as
+  二选一, let me confirm the direction before editing:
+
+● User answered Claude's questions:
+  ⎿  · 点赞计数这两套回写机制怎么理顺？(两种改法方向相反) → 移除 Redis delta
+
+  Thought for 15s (ctrl+o to expand)
+
+● Got it — removing the Redis delta, MySQL as the single source of truth. Let me
+  read the exact current state of both sections to edit precisely.
+
+  Thought for 59s, read 2 files (ctrl+o to expand)
+
+● Confirmed the layout. Implementing Option A — remove the delta, MySQL stays
+  the single source of truth. First the three usages in post_handler.go:
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 4 lines, removed 8 lines
+      204  
+      205    affected, _ := result.RowsAffected()
+      206    if affected == 0 {
+      207 -    // 已点赞，返回当前计数（Redis 增量 + MySQL 基准值）      
+      208 -    current := base + int(h.cache.GetLikeDelta(c.Request.Conte
+          -xt(), docID))                                                 
+      209 -    api.Success(c, gin.H{"likes_count": current, "already_like
+          -d": true})                                                    
+      207 +    // 已点赞，base 即 MySQL 当前计数（由点赞/取消同步维护）  
+      208 +    api.Success(c, gin.H{"likes_count": base, "already_liked":
+          + true})                                                       
+      209      return
+      210    }
+      211  
+      213 -  // 新点赞：原子计数写 Redis，同时持久化到 MySQL             
+      214 -  h.cache.IncrLike(c.Request.Context(), docID)                
+      212 +  // 新点赞：持久化到 MySQL（likes_count 即唯一真相），并失效 
+          +缓存                                                          
+      213    h.db.Exec("UPDATE documents SET likes_count = likes_count + 
+           1 WHERE id = ?", docID)
+      214    h.cache.InvalidatePosts(c.Request.Context(), docID)
+      215  
+      218 -  current := base + 1 + int(h.cache.GetLikeDelta(c.Request.Con
+          -text(), docID)) - 1                                           
+      219 -  // base+1 是本次点赞后的 MySQL 值，GetLikeDelta 是其他并发还
+          -未回写的增量（减去本次已算入的 1）                            
+      220 -  // 简化：直接读 MySQL 最新值（本次已 UPDATE，串行读安全）   
+      216 +  var current int                                             
+      217    _ = h.db.QueryRow("SELECT likes_count FROM documents WHERE i
+           d = ?", docID).Scan(&current)
+      218    api.Success(c, gin.H{"likes_count": current, "already_liked"
+           : false})
+      219  }
+
+● Update(backend\internal\handlers\post_handler.go)
+  ⎿  Added 1 line, removed 2 lines
+      248      return
+      249    }
+      250  
+      251 -  // 原子减计数，持久化，失效缓存                             
+      252 -  h.cache.DecrLike(c.Request.Context(), docID)                
+      251 +  // 持久化到 MySQL，失效缓存                                 
+      252    h.db.Exec("UPDATE documents SET likes_count = GREATEST(likes
+           _count - 1, 0) WHERE id = ?", docID)
+      253    h.cache.InvalidatePosts(c.Request.Context(), docID)
+      254  
+
+● Now remove the entire dead likes-counter section from cache/redis.go:
+
+● Update(backend\internal\cache\redis.go)
+  ⎿  Removed 66 lines
+      254    return c.whitelistExists(ctx, refreshKey(jti))
+      255  }
+      256  
+      257 -// ── 点赞计数器 ─────────────────────────────────────────────
+          -───────────────────                                           
+      258 -// key 格式：likes:delta:{docID}                              
+      259 -// 存储的是"自上次回写 MySQL 以来的增量"，可为负数（取消点赞）
+          -。                                                            
+      260 -// 读取方：likes_count = documents.likes_count + GET likes:del
+          -ta:{docID}                                                    
+      261 -// 写入方：用 INCR / DECR 保证原子性，彻底消除并发竞态。      
+      262 -// 回写：调用方（handler 或定时任务）在合适时机调用 FlushLikeD
+          -elta。                                                        
+      263 -                                                              
+      264 -const likeDeltaPrefix = "likes:delta:"                        
+      265 -                                                              
+      266 -func likeDeltaKey(docID int64) string {                       
+      267 -  return likeDeltaPrefix + strconv.FormatInt(docID, 10)       
+      268 -}                                                             
+      269 -                                                              
+      270 -// IncrLike 原子 +1，返回当前增量。                           
+      271 -func (c *Cache) IncrLike(ctx context.Context, docID int64) int
+          -64 {                                                          
+      272 -  if c == nil {                                               
+      273 -    return 0                                                  
+      274 -  }                                                           
+      275 -  v, err := c.rdb.Incr(ctx, likeDeltaKey(docID)).Result()     
+      276 -  if err != nil {                                             
+      277 -    log.Printf("IncrLike 失败 docID=%d: %v", docID, err)      
+      278 -    return 0                                                  
+      279 -  }                                                           
+      280 -  return v                                                    
+      281 -}                                                             
+      282 -                                                              
+      283 -// DecrLike 原子 -1，返回当前增量。                           
+      284 -func (c *Cache) DecrLike(ctx context.Context, docID int64) int
+          -64 {                                                          
+      285 -  if c == nil {                                               
+      286 -    return 0                                                  
+      287 -  }                                                           
+      288 -  v, err := c.rdb.Decr(ctx, likeDeltaKey(docID)).Result()     
+      289 -  if err != nil {                                             
+      290 -    log.Printf("DecrLike 失败 docID=%d: %v", docID, err)      
+      291 -    return 0                                                  
+      292 -  }                                                           
+      293 -  return v                                                    
+      294 -}                                                             
+      295 -                                                              
+      296 -// GetLikeDelta 获取当前未回写的增量；key 不存在时返回 0。    
+      297 -func (c *Cache) GetLikeDelta(ctx context.Context, docID int64)
+          - int64 {                                                      
+      298 -  if c == nil {                                               
+      299 -    return 0                                                  
+      300 -  }                                                           
+      301 -  v, err := c.rdb.Get(ctx, likeDeltaKey(docID)).Int64()       
+      302 -  if err != nil {                                             
+      303 -    return 0 // redis.Nil 也返回 0，表示无增量                
+      304 -  }                                                           
+      305 -  return v                                                    
+      306 -}                                                             
+      307 -                                                              
+      308 -// FlushLikeDelta 将 Redis 增量原子地回写到 MySQL，并删除 delt
+          -a key。                                                       
+      309 -// 使用 GETDEL 保证"读取后删除"的原子性，避免丢失并发写入的增 
+          -量。                                                          
+      310 -// 返回本次回写的增量值（0 表示无需回写）。                   
+      311 -func (c *Cache) FlushLikeDelta(ctx context.Context, docID int6
+          -4) int64 {                                                    
+      312 -  if c == nil {                                               
+      313 -    return 0                                                  
+      314 -  }                                                           
+      315 -  key := likeDeltaKey(docID)                                  
+      316 -  val, err := c.rdb.GetDel(ctx, key).Int64()                  
+      317 -  if err != nil {                                             
+      318 -    return 0 // redis.Nil：无增量；其他错误：保守返回 0       
+      319 -  }                                                           
+      320 -  return val                                                  
+      321 -}                                                             
+      322 -                                                              
+
+● Bash(go build ./... 2>&1 && echo "BUILD OK" && go vet ./... 2>&1 && echo "VET
+      OK")
+  ⎿  BUILD OK
+     VET OK
+
+  Thought for 15s (ctrl+o to expand)
+
+● Both pass. Let me confirm no dangling references remain anywhere:
+
+  Thought for 23s, searched for 1 pattern (ctrl+o to expand)
+
+● 完成。死代码已移除,双写和双计 bug 一并解决,build + vet 通过,全项目无残留引用。
+
+  改动
+
+  cache/redis.go — 删除整段点赞计数器(约 65 行):likeDeltaPrefix、likeDeltaKey、I
+  ncrLike、DecrLike、GetLikeDelta、FlushLikeDelta,以及 likes:delta: key。strconv
+  仍被 PostDetailKey 使用,保留。
+
+  post_handler.go — LikePost / UnlikePost:
+  - 去掉 IncrLike / DecrLike(不再写 Redis delta)。
+  - 修掉双计 bug:already_liked 分支原来返回 base + GetLikeDelta(MySQL
+  已含全部点赞,再加 delta 翻倍),现在直接返回 base。
+  - 成功分支删掉那段"算了又被覆盖"的 base+1+delta-1 死计算,保留同步 UPDATE +
+  直接读 MySQL 最新值。
+
+  结果
+
+  点赞 → INSERT IGNORE document_likes → (新增) UPDATE likes_count+1 → 读 MySQL →
+  失效缓存
+
+  - 唯一回写机制:MySQL likes_count
+  同步维护,是唯一真相;读路径(ListPosts/GetPost)本来就直接读它,不受影响。
+  - 无 Redis 依赖:点赞计数现在完全不碰 Redis(以前 Redis 挂了 IncrLike 也只是
+  no-op,MySQL 才是准的),少一处故障面。
+  - 缓存失效仍走 InvalidatePosts(延迟双删),不变。
+
+  验证
+
+  - go build ./... + go vet ./... 通过。
+  - grep 确认 IncrLike/DecrLike/GetLikeDelta/FlushLikeDelta/likes:delta
+  全项目零引用。
+
+  补一句(不在本次范围、属既有现象):INSERT IGNORE 与 UPDATE likes_count
+  是两条语句、非同一事务,靠 affected==0
+  判重避免同一用户重复加分——并发下计数仍是对的,只是严格说不是原子。要更强一致可
+  包一个事务,但对当前场景没必要。需要的话再说。
+
+✻ Churned for 5m 54s
+❯ 将此次修改的文件列出来，并指出删改的地方                                      
+
+  Thought for 1m 16s (ctrl+o to expand)
+
+● 本次改动(移除 Redis 点赞 delta)只动了 2 个文件:
+
+  1. backend/internal/cache/redis.go —— 纯删除
+
+  删掉整段「点赞计数器」(约 65 行),无新增:
+  - 注释块 // ── 点赞计数器 ──...
+  - 常量 likeDeltaPrefix = "likes:delta:"
+  - 函数 likeDeltaKey()
+  - 方法 IncrLike()、DecrLike()、GetLikeDelta()、FlushLikeDelta()(死代码)
+
+  2. backend/internal/handlers/post_handler.go —— 改 3 处
+
+  LikePost — already_liked 分支(修双计 bug):
+  - // 已点赞，返回当前计数（Redis 增量 + MySQL 基准值）
+  - current := base + int(h.cache.GetLikeDelta(c.Request.Context(), docID))
+  - api.Success(c, gin.H{"likes_count": current, "already_liked": true})
+  + // 已点赞，base 即 MySQL 当前计数（由点赞/取消同步维护）
+  + api.Success(c, gin.H{"likes_count": base, "already_liked": true})
+
+  LikePost — 新点赞分支(删 Redis 写 + 删死计算):
+  - // 新点赞：原子计数写 Redis，同时持久化到 MySQL
+  - h.cache.IncrLike(c.Request.Context(), docID)
+    h.db.Exec("UPDATE documents SET likes_count = likes_count + 1 WHERE id = ?",
+  docID)
+    h.cache.InvalidatePosts(c.Request.Context(), docID)
+
+  - current := base + 1 + int(h.cache.GetLikeDelta(c.Request.Context(), docID))
+  - 1
+  - // base+1 是本次点赞后的 MySQL 值，GetLikeDelta 
+  是其他并发还未回写的增量（减去本次已算入的 1）
+  - // 简化：直接读 MySQL 最新值（本次已 UPDATE，串行读安全）
+  + // 新点赞：持久化到 MySQL（likes_count 即唯一真相），并失效缓存
+  + var current int
+    _ = h.db.QueryRow("SELECT likes_count FROM documents WHERE id = ?",
+  docID).Scan(&current)
+
+  UnlikePost — 取消点赞分支(删 Redis 写):
+  - // 原子减计数，持久化，失效缓存
+  - h.cache.DecrLike(c.Request.Context(), docID)
+  + // 持久化到 MySQL，失效缓存
+    h.db.Exec("UPDATE documents SET likes_count = GREATEST(likes_count - 1, 0) 
+  WHERE id = ?", docID)
+    h.cache.InvalidatePosts(c.Request.Context(), docID)
+
+  ---
+  以上是最近这一次(删 delta)的改动。如果你指的是本次会话全部改动,那是 9
+  个文件(延迟双删 + TTL 抖动 + access/refresh token + 删 delta):
+
+  backend/internal/cache/redis.go、handlers/post_handler.go、handlers/document_h
+  andler.go、handlers/auth_handler.go、middleware/jwt.go、utils/jwt.go、config/c
+  onfig.go、server/server.go,以及前端
+  frontend/src/services/api.js、composables/useAuth.js(共 10 个,后端 8 前端 2)。
+
+  需要我按"全会话"维度逐文件列出删改点吗?
+
+✻ Sautéed for 1m 27s
+
+❯ 需要                                                                          
+  ⎿  API Error: Request rejected (429) · Service Unavailable
+
+✻ Churned for 5m 22s
+
+❯ 需要                                                                          
+  ⎿  API Error: Request rejected (429) · Service Unavailable
+
+✻ Crunched for 4m 55s

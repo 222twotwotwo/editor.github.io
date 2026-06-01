@@ -1,0 +1,148 @@
+ ▐▛███▜▌   Claude Code v2.1.156
+▝▜█████▛▘  Opus 4.8 · API Usage Billing
+  ▘▘ ▝▝    ~\Desktop\alone
+
+   Opus 4.8 is here! Now defaults to high effort · /effort xhigh for your hardest tasks
+
+❯ 当前后端是如何保证缓存一致性的                                                
+
+  Thought for 13s (ctrl+o to expand)
+
+● 缓存相关代码是最近新增的（backend/internal/cache/ 是未跟踪的新目录，多个
+  handler 也有改动）。我来看一下具体实现，搞清楚缓存一致性是怎么处理的。
+
+  Thought for 18s, searched for 1 pattern, read 2 files, listed 1 directory (ctrl+o to expand)
+
+● 现在看一下 document_handler.go、auth_handler.go，以及 server
+  装配和是否有定时回写任务。
+
+  Thought for 11s, read 2 files (ctrl+o to expand)
+
+● 看一下 auth_handler、main.go（是否有 FlushLikeDelta 定时回写）以及
+  FlushLikeDelta 的调用情况。
+
+  Thought for 1m 3s, searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● 关键点已经基本清楚了。最后确认一下 JWT 中间件里 Redis 校验的逻辑，以及
+  FlushLikeDelta 确实没有任何调用方（定时任务/handler 都没有）。
+
+  Thought for 3m 1s, read 2 files (ctrl+o to expand)
+
+● 读完缓存相关的全部代码（cache/redis.go + 三个 handler + 中间件 + 装配 +
+  压测报告
+  qps.md），下面是当前后端缓存一致性的完整机制，以及我发现的几个真实问题。
+
+  后端其实有三套独立的缓存，一致性策略各不相同：
+
+  ---
+  1. 社区列表/详情读缓存 —— 全局版本号失效（核心机制）
+
+  这是你问题的主答案，做得比较干净。
+
+  读路径（post_handler.go:59 / :127）：
+  ver = GET posts:ver
+  key = posts:list:v{ver}:p{page}:l{limit}   // 详情是 post:v{ver}:{id}
+  命中 → 直接返回；未命中 → 查 DB → SET key, TTL=60s
+
+  写路径：任何会改变列表/详情内容的写操作，在 DB 写成功之后 INCR posts:ver：
+  - 文档增删改：document_handler.go:84 / 166 / 291 / 333
+  - 点赞/取消：post_handler.go:222 / 264
+
+  一致性怎么保证的：
+  - 版本号是 key 的前缀。INCR 之后，所有旧 v5... 的 key
+  一次性变成"无人会再读"的孤儿，新读请求一律用 v6... → 必然 miss →
+  回源拿最新数据。不需要枚举/删除分页 
+  key（分页组合无穷，精确删除很难），这是该设计最大的优点。
+  - 顺序正确：先写 DB 再 IncrVersion，避免"先失效后写"导致的并发回填脏数据。
+  - 兜底：即使 IncrVersion 因 Redis 抖动失败（返回 0、版本没涨），60s TTL
+  仍能把脏数据的存活时间封顶在 60 秒。
+
+  它的弱点（属于"够用但不强"）：
+  - 粒度太粗：全局一个
+  posts:ver。上传一篇私有文档、改一个字、点一个赞，都会让整个社区缓存（所有页 + 
+  所有详情）全部失效。写一多命中率就崩——qps.md:213 自己也写了"写多读少不要加"。
+  - 存在一个极小的陈旧窗口：DB 已提交、IncrVersion
+  还没执行的那一瞬间，并发读可能命中旧版本 key 返回旧值。窗口是一次 Redis
+  RTT，且被 TTL 封顶，工程上可接受，但不是线性一致。
+
+  ---
+  2. 点赞计数 —— 写穿 MySQL（真正的一致性来源），但 Redis 增量层是半成品 ⚠️
+
+  这里有真实问题，建议重点看。
+
+  redis.go:150-214 的设计意图是：Redis 存"自上次回写以来的增量"
+  likes:delta:{id}，读 = MySQL基准 + 增量，靠 FlushLikeDelta（GETDEL
+  原子回写）定期对账。
+
+  但实际代码并没有按这个设计走：
+
+  1. FlushLikeDelta 全代码库零调用 —— 我 grep 了所有
+  .go，它只出现在自己的定义和注释里；main.go 没有定时任务，没有 goroutine，没有
+  cron。Redis 的 delta 写进去就再也不回写、不清零，于是它单调增长，语义早已不是"
+  增量"而是"开天辟地以来的总点赞数"。
+  2. 同时 LikePost/UnlikePost 又同步把 MySQL likes_count ± 1
+  写穿了（post_handler.go:221 / 263）。所以 MySQL 
+  才是真正且正确的单一数据源；列表/详情读的也是 MySQL（:69 / :138，注释 :153
+  明说不加 delta）—— 这部分是一致的。
+  3. 但 delta 唯一被读的那个分支会双重计数：LikePost
+  的"已点过赞"分支（post_handler.go:214）：
+  current := base + int(h.cache.GetLikeDelta(...))
+  3. base（MySQL）已经包含了全部点赞，从不回写的 delta 也几乎等于全部点赞 →
+  两者相加 ≈ 真实值的 2 倍。一个已点赞用户再点一次，接口返回的 likes_count
+  会膨胀（真实 5，返回 ~10）。如果前端用这个返回值刷新显示，就是用户可见的 bug。
+    - 反讽点：这个 bug 只在开启 Redis 时出现；关掉 Redis（c==nil）时
+  GetLikeDelta 返 0，结果反而正确。
+  4. post_handler.go:224 那行 base + 1 + delta - 1 是死代码，下一行 :227 立刻用
+  MySQL 重新查询覆盖了它——无害但很迷惑。
+
+  结论：点赞的一致性实际上靠的是"写穿 MySQL"，这部分没问题；Redis
+  增量层是个没接完的半成品，既冗余又在一个分支制造了双计数。
+
+  ---
+  3. JWT Token 白名单 —— Redis 做即时吊销，故障时 fail-open
+
+  - 登录/注册 SetToken(jti, ttl)，退出 DelToken(jti)，中间件 jwt.go:40
+  验签后再查 TokenExists。
+  - Redis 正常：退出即时生效，一致。
+  - Redis 全挂（c==nil）：TokenExists 返回 true（放行），写操作变 no-op ——
+  主动吊销失效，token 退化为靠 JWT 自身过期。这是刻意的可用性 > 
+  即时吊销取舍（redis.go:103-106 有注释）。
+  - 一个边角不一致：Redis 启动时在线（c != nil）但登录那一刻 SetToken
+  偶发失败（只记日志不重试）。若 Redis 随后恢复，下一个请求 TokenExists 命中
+  redis.Nil → 返回 false → 刚登录成功的用户被判"token 已吊销"踢掉。"有效 token ⟺
+  jti 在白名单"这个不变量被一次静默写失败打破。窗口很窄但真实存在。
+
+  ---
+  总结
+
+  ┌───────────────┬────────────────────────┬───────────────────────────────┐
+  │    子系统     │       一致性策略       │             评价              │
+  ├───────────────┼────────────────────────┼───────────────────────────────┤
+  │ 列表/详情读缓 │ 全局版本号 INCR 失效 + │ ✅ 思路正确、降级安全；弱点是 │
+  │ 存            │  60s TTL，写后失效     │ 粒度粗 + 微小陈旧窗口         │
+  ├───────────────┼────────────────────────┼───────────────────────────────┤
+  │ 点赞计数      │ 写穿 MySQL（真正来源） │ ⚠️ MySQL 侧一致；delta 层是死 │
+  │               │ ；Redis delta 未接对账 │ 代码，"已点赞"分支双计数      │
+  ├───────────────┼────────────────────────┼───────────────────────────────┤
+  │ Token 白名单  │ Redis 即时吊销，故障   │ ✅ 取舍合理；⚠️ SetToken      │
+  │               │ fail-open              │ 静默失败后有踢人边角 case     │
+  └───────────────┴────────────────────────┴───────────────────────────────┘
+
+  整体降级设计是亮点：Cache 的 nil 接收者所有方法都是 no-op，Redis
+  挂掉自动回落到纯 DB，不阻塞启动。
+
+  如果你需要，我可以接着做其中任意一项（都属于改代码，需你点头）：
+  1. 修双计数：把 post_handler.go:214 的 base + GetLikeDelta 改成直接读
+  MySQL，并删掉 :224 死代码；
+  2. 二选一收口 delta 设计：要么删掉 Redis 增量层（既然已写穿
+  MySQL），要么去掉同步 UPDATE、补上 FlushLikeDelta
+  的定时回写，让两套语义不再打架；
+  3. 修 Token 边角：SetToken
+  失败时回传错误让登录失败重试，避免"登录成功却被吊销"。
+
+  要我动哪个？
+
+✻ Worked for 4m 49s
+
+❯ /export                                                                       
+  ⎿  Conversation copied to clipboard
