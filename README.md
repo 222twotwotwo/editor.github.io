@@ -1,4 +1,4 @@
-# Markdown 编辑器全栈项目
+# Markdown 社区
 
 基于 **Vue 3 + Go (Gin)** 的 Markdown 编辑器，支持用户登录、实时预览、文档存库、社区页与深浅主题。
 
